@@ -1,13 +1,17 @@
 {
   "expo": {
     "name": "puzzle-app",
-    "slug": "puzzle-app",
+    "slug": "brksu",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.brksusteam.brksu",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,6 +23,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "cd5f4d1c-4bde-4456-bba4-addf0deb807e"
+      }
+    },
+    "owner": "brksus-team"
   }
 }
