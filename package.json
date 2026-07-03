@@ -8,6 +8,7 @@
     "@shopify/react-native-skia": "2.2.12",
     "babel-preset-expo": "~54.0.10",
     "expo": "~54.0.0",
+    "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.11",
     "expo-media-library": "~18.2.1",
     "expo-status-bar": "~3.0.9",

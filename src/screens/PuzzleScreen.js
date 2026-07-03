@@ -17,6 +17,7 @@ import {
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import * as ImagePicker from 'expo-image-picker';
 import Svg, { Defs, ClipPath, Path, Image as SvgImage } from 'react-native-svg';
+import * as ImageManipulator from 'expo-image-manipulator';
 
 const { width, height } = Dimensions.get('window');
 
@@ -24,8 +25,6 @@ const SELECT_MODE_INDEX = 2;
 const TRAY_HEADER_SPACE = 76;
 
 const TRAY_COLS = width > 1200 ? 8 : width > 700 ? 6 : 4;
-// NOT: 196/256 gerçek cihazlarda test edilmeden varsayılan/önerilen yapma;
-// mevcut SVG mimarisi 144 üstünde performans testi ister (400+ parça için ayrı optimizasyon gerekir).
 const DIFFICULTIES = [36, 64, 100, 144, 196, 256];
 
 const SEND_COUNT = 20;
@@ -96,13 +95,14 @@ function getSolvedPiecePosition(piece, frameOrigin) {
 
 function createPieces(uri, totalPieces) {
   const grid = Math.round(Math.sqrt(totalPieces));
+  const createdAt = Date.now();
 
   return Array.from({ length: grid * grid }, (_, index) => {
     const row = Math.floor(index / grid);
     const col = index % grid;
 
     return {
-      id: `${Date.now()}-${index}`,
+      id: `${createdAt}-${index}`,
       originalIndex: index,
       uri,
       row,
@@ -256,12 +256,27 @@ function getJigsawPath(piece, size) {
   return d;
 }
 
-function PieceImage({ piece, size, highlightColor }) {
+const PieceImage = React.memo(function PieceImage({
+  piece,
+  size,
+  highlightColor,
+}) {
   const overhang = getPieceOverhang(size);
   const visualSize = getVisualSize(size);
-  const path = getJigsawPath(piece, size);
-  const safeId = String(piece.id).replace(/[^a-zA-Z0-9_]/g, '_');
-  const clipId = `clip_${safeId}_${Math.round(size * 1000)}`;
+
+  const path = useMemo(() => getJigsawPath(piece, size), [
+    piece.id,
+    piece.row,
+    piece.col,
+    piece.rows,
+    piece.cols,
+    size,
+  ]);
+
+  const clipId = useMemo(() => {
+    const safeId = String(piece.id).replace(/[^a-zA-Z0-9_]/g, '_');
+    return `clip_${safeId}_${Math.round(size * 1000)}`;
+  }, [piece.id, size]);
 
   return (
     <View
@@ -295,18 +310,17 @@ function PieceImage({ piece, size, highlightColor }) {
         />
 
         {highlightColor ? (
-          <Path d={path} fill="none" stroke={highlightColor} strokeWidth={1.4} />
+          <Path d={path} fill="none" stroke={highlightColor} strokeWidth={1.1} />
         ) : (
-          // Kalın tek çizgi yerine ince "bevel/oyuk" hissi veren çift stroke.
           <>
-            <Path d={path} fill="none" stroke="#00000033" strokeWidth={1.1} />
-            <Path d={path} fill="none" stroke="#ffffff30" strokeWidth={0.45} />
+            <Path d={path} fill="none" stroke="#00000035" strokeWidth={1.05} />
+            <Path d={path} fill="none" stroke="#ffffff22" strokeWidth={0.35} />
           </>
         )}
       </Svg>
     </View>
   );
-}
+});
 
 function areAdjacentPieces(a, b) {
   const rowDiff = Math.abs(a.row - b.row);
@@ -476,7 +490,10 @@ function mergeGroups(draggedGroup, otherGroup, targetDraggedX, targetDraggedY) {
   };
 }
 
-function DraggableGroup({ group, onMoveEnd }) {
+const DraggableGroup = React.memo(function DraggableGroup({
+  group,
+  onMoveEnd,
+}) {
   const pan = useRef(
     new Animated.ValueXY({
       x: group.x,
@@ -538,6 +555,10 @@ function DraggableGroup({ group, onMoveEnd }) {
             });
           }
         },
+
+        onPanResponderTerminate: () => {
+          pan.flattenOffset();
+        },
       }),
     [group.id, group.anchoredToFrame, onMoveEnd, pan]
   );
@@ -579,9 +600,9 @@ function DraggableGroup({ group, onMoveEnd }) {
       })}
     </Animated.View>
   );
-}
+});
 
-function TrayPieceItem({
+const TrayPieceItem = React.memo(function TrayPieceItem({
   item,
   isSelected,
   isSelectionMode,
@@ -593,7 +614,6 @@ function TrayPieceItem({
   onDragMove,
   onDragEnd,
 }) {
-  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const [isDragging, setIsDragging] = useState(false);
 
   const panResponder = useMemo(
@@ -607,53 +627,51 @@ function TrayPieceItem({
         onShouldBlockNativeResponder: () => true,
 
         onPanResponderGrant: (event, gesture) => {
-  if (isSelectionMode) return;
+          if (isSelectionMode) return;
 
-  const pageX = event.nativeEvent.pageX ?? gesture.x0;
-  const pageY = event.nativeEvent.pageY ?? gesture.y0;
+          const pageX = event.nativeEvent.pageX ?? gesture.x0;
+          const pageY = event.nativeEvent.pageY ?? gesture.y0;
 
-  setIsDragging(true);
+          setIsDragging(true);
 
-  onDragStart?.(item, {
-    x: pageX,
-    y: pageY,
-  });
-},
+          onDragStart?.(item, {
+            x: pageX,
+            y: pageY,
+          });
+        },
 
-onPanResponderMove: (event, gesture) => {
-  if (isSelectionMode) return;
+        onPanResponderMove: (event, gesture) => {
+          if (isSelectionMode) return;
 
-  const pageX = event.nativeEvent.pageX ?? gesture.moveX;
-  const pageY = event.nativeEvent.pageY ?? gesture.moveY;
+          const pageX = event.nativeEvent.pageX ?? gesture.moveX;
+          const pageY = event.nativeEvent.pageY ?? gesture.moveY;
 
-  onDragMove?.(item, {
-    x: pageX,
-    y: pageY,
-  });
-},
+          onDragMove?.(item, {
+            x: pageX,
+            y: pageY,
+          });
+        },
 
         onPanResponderRelease: (event, gesture) => {
-  if (isSelectionMode) return;
+          if (isSelectionMode) return;
 
-  const pageX = event.nativeEvent.pageX ?? gesture.moveX;
-  const pageY = event.nativeEvent.pageY ?? gesture.moveY;
+          const pageX = event.nativeEvent.pageX ?? gesture.moveX;
+          const pageY = event.nativeEvent.pageY ?? gesture.moveY;
 
-  setIsDragging(false);
-  pan.setValue({ x: 0, y: 0 });
+          setIsDragging(false);
 
-  onDragToBoard(item, {
-    x: pageX,
-    y: pageY,
-  });
+          onDragToBoard(item, {
+            x: pageX,
+            y: pageY,
+          });
 
-  requestAnimationFrame(() => {
-    onDragEnd?.();
-  });
-},
+          requestAnimationFrame(() => {
+            onDragEnd?.();
+          });
+        },
 
         onPanResponderTerminate: () => {
           setIsDragging(false);
-          pan.setValue({ x: 0, y: 0 });
           onDragEnd?.();
         },
       }),
@@ -664,7 +682,6 @@ onPanResponderMove: (event, gesture) => {
       onDragStart,
       onDragMove,
       onDragEnd,
-      pan,
     ]
   );
 
@@ -697,8 +714,8 @@ onPanResponderMove: (event, gesture) => {
     );
   }
 
-    return (
-    <Animated.View
+  return (
+    <View
       {...panResponder.panHandlers}
       style={[
         styles.trayPiece,
@@ -711,17 +728,18 @@ onPanResponderMove: (event, gesture) => {
       ]}
     >
       <PieceImage piece={item} size={trayPieceSize} />
-    </Animated.View>
+    </View>
   );
-}
+});
 
 export default function PuzzleScreen() {
   const sheetRef = useRef(null);
-const boardRef = useRef(null);
-const containerRef = useRef(null);
-const screenOffsetRef = useRef({ x: 0, y: 0 });
-const dragPreviewRef = useRef(null);
-const dragRafRef = useRef(null);
+  const boardRef = useRef(null);
+  const containerRef = useRef(null);
+
+  const screenOffsetRef = useRef({ x: 0, y: 0 });
+  const dragPreviewRef = useRef(null);
+  const dragPreviewPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
 
   const [sourceImage, setSourceImage] = useState(null);
   const [pieces, setPieces] = useState([]);
@@ -735,7 +753,6 @@ const dragRafRef = useRef(null);
   const [pendingUri, setPendingUri] = useState(null);
   const [edgeOnly, setEdgeOnly] = useState(false);
   const [selectedPieceIds, setSelectedPieceIds] = useState([]);
-  const [screenOffset, setScreenOffset] = useState({ x: 0, y: 0 });
 
   const [sheetIndex, setSheetIndex] = useState(0);
   const [dragPreview, setDragPreview] = useState(null);
@@ -816,101 +833,141 @@ const dragRafRef = useRef(null);
       ? `Seçilenleri Gönder (${selectedCount})`
       : `${sendCountLabel} Parça Gönder`;
 
-  const boardPieceCount = boardGroups.reduce(
-    (total, group) => total + group.pieces.length,
-    0
-  );
+  
 
   const referenceWidth = activePiece ? activePieceSize * activePiece.cols : 0;
   const referenceHeight = activePiece ? activePieceSize * activePiece.rows : 0;
 
-  const applyImage = (uri) => {
-    setPendingUri(uri);
-    setPresetOpen(false);
-    setDifficultyOpen(true);
-  };
+  const measureContainer = useCallback(() => {
+    requestAnimationFrame(() => {
+      containerRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
+        screenOffsetRef.current = {
+          x: pageX || 0,
+          y: pageY || 0,
+        };
+      });
+    });
+  }, []);
 
-  const selectDifficulty = (totalPieces) => {
-    const nextPieces = createPieces(pendingUri, totalPieces);
+  const measureBoard = useCallback(() => {
+    requestAnimationFrame(() => {
+      boardRef.current?.measure(
+        (_x, _y, measuredWidth, measuredHeight, pageX, pageY) => {
+          setBoardWindowLayout({
+            x: pageX || 0,
+            y: pageY || 0,
+            width: measuredWidth,
+            height: measuredHeight,
+          });
+        }
+      );
+    });
+  }, []);
 
-    setSourceImage(pendingUri);
-    setPieces(nextPieces);
-    setBoardGroups([]);
-    setSelectedPieceIds([]);
-    setDifficultyOpen(false);
-    setEdgeOnly(false);
-    setHintOn(false);
-    setSheetIndex(0);
-    setDragPreview(null);
-    setIsTrayPieceDragging(false);
-  };
-
-  const normalizeAssetUri = (uri) => {
-    // Bazı Android sürümlerinde şema (file://) olmadan dönebiliyor,
-    // bu da Image/SvgImage tarafında sessizce hiç yüklenmemesine sebep oluyordu.
+  const normalizeAssetUri = useCallback((uri) => {
     if (Platform.OS === 'android' && uri && !uri.includes('://')) {
       return `file://${uri}`;
     }
-    return uri;
-  };
 
-  const verifyImageLoads = (uri) =>
-    new Promise((resolve) => {
-      Image.getSize(
-        uri,
-        () => resolve(true),
-        () => resolve(false)
+    return uri;
+  }, []);
+
+  const verifyImageLoads = useCallback(
+    (uri) =>
+      new Promise((resolve) => {
+        Image.getSize(
+          uri,
+          () => resolve(true),
+          () => resolve(false)
+        );
+      }),
+    []
+  );
+
+  const applyImage = useCallback((uri) => {
+    setPendingUri(uri);
+    setPresetOpen(false);
+    setDifficultyOpen(true);
+  }, []);
+
+  const selectDifficulty = useCallback(
+    (totalPieces) => {
+      if (!pendingUri) return;
+
+      const nextPieces = createPieces(pendingUri, totalPieces);
+
+      setSourceImage(pendingUri);
+      setPieces(nextPieces);
+      setBoardGroups([]);
+      setSelectedPieceIds([]);
+      setDifficultyOpen(false);
+      setEdgeOnly(false);
+      setHintOn(false);
+      setSheetIndex(0);
+      setDragPreview(null);
+      setIsTrayPieceDragging(false);
+
+      dragPreviewRef.current = null;
+      dragPreviewPan.setValue({ x: 0, y: 0 });
+      sheetRef.current?.snapToIndex(0);
+    },
+    [pendingUri, dragPreviewPan]
+  );
+
+  const pickFromGallery = useCallback(async () => {
+  try {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        'İzin gerekli',
+        'Galeriden görsel seçebilmek için fotoğraf erişim izni vermelisin.'
       );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.9,
+      base64: false,
+      exif: false,
+      legacy: Platform.OS === 'android',
     });
 
-  const pickFromGallery = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-      if (status !== 'granted') {
-        Alert.alert(
-          'İzin gerekli',
-          'Galeriden görsel seçebilmek için galeri erişim izni vermelisin.'
-        );
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.8,
-        allowsEditing: false,
-        base64: true,
-      });
-
-      if (result.canceled || !result.assets?.[0]) return;
-
-      const asset = result.assets[0];
-      const normalizedUri = normalizeAssetUri(asset.uri);
-      const loadsFine = await verifyImageLoads(normalizedUri);
-
-      if (loadsFine) {
-        applyImage(normalizedUri);
-        return;
-      }
-
-      // local URI SvgImage/Image tarafında açılamadı: data-uri fallback.
-      if (asset.base64) {
-        const mime = asset.mimeType || 'image/jpeg';
-        applyImage(`data:${mime};base64,${asset.base64}`);
-        return;
-      }
-
-      Alert.alert(
-        'Görsel yüklenemedi',
-        'Seçilen görsel açılamadı, lütfen farklı bir görsel dene.'
-      );
-    } catch (error) {
-      Alert.alert(
-        'Bir sorun oluştu',
-        'Görsel seçilirken beklenmedik bir hata oluştu, tekrar dener misin?'
-      );
+    if (result.canceled || !result.assets?.[0]?.uri) {
+      return;
     }
-  };
+
+    const pickedUri = normalizeAssetUri(result.assets[0].uri);
+
+    const squareImage = await ImageManipulator.manipulateAsync(
+      pickedUri,
+      [
+        {
+          resize: {
+            width: 1024,
+            height: 1024,
+          },
+        },
+      ],
+      {
+        compress: 0.9,
+        format: ImageManipulator.SaveFormat.JPEG,
+      }
+    );
+
+    applyImage(squareImage.uri);
+  } catch (error) {
+    console.log('Gallery pick error:', error);
+
+    Alert.alert(
+      'Görsel seçilemedi',
+      'Telefonda galeri açıldı ama görsel işlenemedi. Farklı bir görsel dene veya uygulama izinlerini kontrol et.'
+    );
+  }
+}, [applyImage, normalizeAssetUri]);
 
   const maybeSnapGroupToFrame = useCallback(
     (group) => {
@@ -928,7 +985,7 @@ const dragRafRef = useRef(null);
     [frameOrigin]
   );
 
-  const sendPiecesToBoard = () => {
+  const sendPiecesToBoard = useCallback(() => {
     const selected =
       selectedPieceIds.length > 0
         ? visiblePieces.filter((piece) => selectedPieceIds.includes(piece.id))
@@ -947,117 +1004,132 @@ const dragRafRef = useRef(null);
     setSelectedPieceIds((prev) =>
       prev.filter((pieceId) => !selectedIds.has(pieceId))
     );
-  };
+  }, [selectedPieceIds, visiblePieces, frameOrigin, boardLayout]);
 
-  const updateDragPreview = useCallback((piece, screenPosition) => {
-  const size = getBoardPieceSize(piece);
-  const visualSize = getVisualSize(size);
+  const updateDragPreview = useCallback(
+    (piece, screenPosition) => {
+      const size = getBoardPieceSize(piece);
+      const visualSize = getVisualSize(size);
 
-  const nextPreview = {
-    piece,
-    size,
-    visualSize,
-    x: screenPosition.x - visualSize / 2,
-    y: screenPosition.y - visualSize / 2,
-  };
+      const pageX = screenPosition.x - visualSize / 2;
+      const pageY = screenPosition.y - visualSize / 2;
 
-  dragPreviewRef.current = nextPreview;
+      const localX = pageX - screenOffsetRef.current.x;
+      const localY = pageY - screenOffsetRef.current.y;
 
-  if (dragRafRef.current) return;
+      const hadPreview = Boolean(dragPreviewRef.current);
 
-  dragRafRef.current = requestAnimationFrame(() => {
-    dragRafRef.current = null;
-    setDragPreview(dragPreviewRef.current);
-  });
-}, []);
+      dragPreviewRef.current = {
+        piece,
+        size,
+        visualSize,
+        x: pageX,
+        y: pageY,
+      };
+
+      dragPreviewPan.setValue({
+        x: localX,
+        y: localY,
+      });
+
+      if (!hadPreview) {
+        setDragPreview({
+          piece,
+          size,
+          visualSize,
+        });
+      }
+    },
+    [dragPreviewPan]
+  );
 
   const clearDragPreview = useCallback(() => {
-  if (dragRafRef.current) {
-    cancelAnimationFrame(dragRafRef.current);
-    dragRafRef.current = null;
-  }
-
-  dragPreviewRef.current = null;
-  setDragPreview(null);
-  setIsTrayPieceDragging(false);
-}, []);
-
-  const sendOnePieceFromTrayToBoard = useCallback(
-  (piece, screenPosition) => {
-    const size = getBoardPieceSize(piece);
-    const visualSize = getVisualSize(size);
-
-    const fallbackPreview = {
-      piece,
-      size,
-      visualSize,
-      x: screenPosition.x - visualSize / 2,
-      y: screenPosition.y - visualSize / 2,
-    };
-
-    const finalPreview = dragPreviewRef.current || fallbackPreview;
-
     dragPreviewRef.current = null;
+
+    dragPreviewPan.setValue({
+      x: 0,
+      y: 0,
+    });
+
     setDragPreview(null);
     setIsTrayPieceDragging(false);
+  }, [dragPreviewPan]);
 
-    const currentSheetHeight =
-      typeof snapPoints[sheetIndex] === 'number'
-        ? snapPoints[sheetIndex]
-        : height * 0.2;
+  const sendOnePieceFromTrayToBoard = useCallback(
+    (piece, screenPosition) => {
+      const size = getBoardPieceSize(piece);
+      const visualSize = getVisualSize(size);
 
-    const sheetTopY = height - currentSheetHeight;
+      const fallbackPreview = {
+        piece,
+        size,
+        visualSize,
+        x: screenPosition.x - visualSize / 2,
+        y: screenPosition.y - visualSize / 2,
+      };
 
-    const previewCenterY = finalPreview.y + finalPreview.visualSize / 2;
-    const releasedInsideTray = previewCenterY >= sheetTopY;
+      const finalPreview = dragPreviewRef.current || fallbackPreview;
 
-    if (releasedInsideTray) {
-      return;
-    }
+      dragPreviewRef.current = null;
+      setDragPreview(null);
+      setIsTrayPieceDragging(false);
 
-    const rawBoardX = finalPreview.x - boardWindowLayout.x;
-    const rawBoardY = finalPreview.y - boardWindowLayout.y;
+      const currentSheetHeight =
+        typeof snapPoints[sheetIndex] === 'number'
+          ? snapPoints[sheetIndex]
+          : height * 0.2;
 
-    const maxX = Math.max(
-      BOARD_PADDING,
-      boardLayout.width - visualSize - BOARD_PADDING
-    );
+      const sheetTopY = height - currentSheetHeight;
+      const previewCenterY = finalPreview.y + finalPreview.visualSize / 2;
+      const releasedInsideTray = previewCenterY >= sheetTopY;
 
-    const maxY = Math.max(
-      BOARD_PADDING,
-      boardLayout.height - visualSize - BOARD_PADDING
-    );
+      if (releasedInsideTray) {
+        return;
+      }
 
-    const customPosition = {
-      x: Math.min(Math.max(rawBoardX, BOARD_PADDING), maxX),
-      y: Math.min(Math.max(rawBoardY, BOARD_PADDING), maxY),
-    };
+      const rawBoardX = finalPreview.x - boardWindowLayout.x;
+      const rawBoardY = finalPreview.y - boardWindowLayout.y;
 
-    const rawGroup = createGroupFromPiece(
-      piece,
-      0,
-      frameOrigin,
+      const maxX = Math.max(
+        BOARD_PADDING,
+        boardLayout.width - visualSize - BOARD_PADDING
+      );
+
+      const maxY = Math.max(
+        BOARD_PADDING,
+        boardLayout.height - visualSize - BOARD_PADDING
+      );
+
+      const customPosition = {
+        x: Math.min(Math.max(rawBoardX, BOARD_PADDING), maxX),
+        y: Math.min(Math.max(rawBoardY, BOARD_PADDING), maxY),
+      };
+
+      const rawGroup = createGroupFromPiece(
+        piece,
+        0,
+        frameOrigin,
+        boardLayout,
+        customPosition
+      );
+
+      const newGroup = maybeSnapGroupToFrame(rawGroup);
+
+      setBoardGroups((prev) => [...prev, newGroup]);
+      setPieces((prev) => prev.filter((p) => p.id !== piece.id));
+      setSelectedPieceIds((prev) => prev.filter((id) => id !== piece.id));
+    },
+    [
       boardLayout,
-      customPosition
-    );
+      boardWindowLayout,
+      frameOrigin,
+      maybeSnapGroupToFrame,
+      sheetIndex,
+      snapPoints,
+    ]
+  );
 
-    const newGroup = maybeSnapGroupToFrame(rawGroup);
-
-    setBoardGroups((prev) => [...prev, newGroup]);
-    setPieces((prev) => prev.filter((p) => p.id !== piece.id));
-    setSelectedPieceIds((prev) => prev.filter((id) => id !== piece.id));
-  },
-  [
-    boardLayout,
-    boardWindowLayout,
-    frameOrigin,
-    maybeSnapGroupToFrame,
-    sheetIndex,
-    snapPoints,
-  ]
-);
-
-  const clearLooseSinglePieces = () => {
+  const clearLooseSinglePieces = useCallback(() => {
     const looseGroups = boardGroups.filter(
       (group) => !group.anchoredToFrame && group.pieces.length === 1
     );
@@ -1081,7 +1153,7 @@ const dragRafRef = useRef(null);
     );
 
     setSelectedPieceIds([]);
-  };
+  }, [boardGroups]);
 
   const toggleTrayPieceSelection = useCallback((pieceId) => {
     setSelectedPieceIds((prev) => {
@@ -1150,12 +1222,11 @@ const dragRafRef = useRef(null);
     [maybeSnapGroupToFrame]
   );
 
-
   const exitSelectionMode = useCallback(() => {
-  setSelectedPieceIds([]);
-  setSheetIndex(0);
-  sheetRef.current?.snapToIndex(0);
-}, []);
+    setSelectedPieceIds([]);
+    setSheetIndex(0);
+    sheetRef.current?.snapToIndex(0);
+  }, []);
 
   const renderTrayPiece = useCallback(
     ({ item }) => {
@@ -1180,29 +1251,22 @@ const dragRafRef = useRef(null);
       );
     },
     [
-  selectedPieceIds,
-  isSelectionMode,
-  trayPieceSize,
-  trayVisualSize,
-  toggleTrayPieceSelection,
-  sendOnePieceFromTrayToBoard,
-  updateDragPreview,
-  clearDragPreview,
-]
+      selectedPieceIds,
+      isSelectionMode,
+      trayPieceSize,
+      trayVisualSize,
+      toggleTrayPieceSelection,
+      sendOnePieceFromTrayToBoard,
+      updateDragPreview,
+      clearDragPreview,
+    ]
   );
 
   return (
     <View
       ref={containerRef}
       style={styles.container}
-      onLayout={() => {
-        requestAnimationFrame(() => {
-          containerRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
-            screenOffsetRef.current = { x: pageX, y: pageY };
-            setScreenOffset({ x: pageX, y: pageY });
-          });
-        });
-      }}
+      onLayout={measureContainer}
     >
       <View style={styles.header}>
         <TouchableOpacity
@@ -1262,19 +1326,7 @@ const dragRafRef = useRef(null);
         style={styles.board}
         onLayout={(event) => {
           setBoardLayout(event.nativeEvent.layout);
-
-          requestAnimationFrame(() => {
-  boardRef.current?.measure(
-    (_x, _y, measuredWidth, measuredHeight, pageX, pageY) => {
-      setBoardWindowLayout({
-        x: pageX,
-        y: pageY,
-        width: measuredWidth,
-        height: measuredHeight,
-      });
-    }
-  );
-});
+          measureBoard();
         }}
       >
         {!sourceImage && (
@@ -1317,14 +1369,7 @@ const dragRafRef = useRef(null);
           <Text style={styles.boardLabel}>Alt tepsiden parça gönder</Text>
         )}
 
-        {sourceImage && boardGroups.length > 0 && (
-          <View style={styles.progressBadge}>
-            <Text style={styles.progressText}>
-              Parça: {boardPieceCount} | Sabit: {anchoredGroups.length} | Grup:{' '}
-              {connectedGroups.length} | Tekli: {looseSingleGroups.length}
-            </Text>
-          </View>
-        )}
+        
 
         {orderedBoardGroups.map((group) => (
           <DraggableGroup
@@ -1360,22 +1405,24 @@ const dragRafRef = useRef(null);
             </Text>
           </View>
 
-          {isSelectionMode && (
-  <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
-    <Text style={styles.modeBtnText}>Sürükle</Text>
-  </TouchableOpacity>
-)}
+          <View style={styles.trayActionRow}>
+            {isSelectionMode && (
+              <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
+                <Text style={styles.modeBtnText}>Sürükle</Text>
+              </TouchableOpacity>
+            )}
 
-          <TouchableOpacity
-            style={[
-              styles.sendBtn,
-              visiblePieces.length === 0 && styles.disabledBtn,
-            ]}
-            disabled={visiblePieces.length === 0}
-            onPress={sendPiecesToBoard}
-          >
-            <Text style={styles.sendBtnText}>{sendButtonLabel}</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.sendBtn,
+                visiblePieces.length === 0 && styles.disabledBtn,
+              ]}
+              disabled={visiblePieces.length === 0}
+              onPress={sendPiecesToBoard}
+            >
+              <Text style={styles.sendBtnText}>{sendButtonLabel}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <BottomSheetFlatList
@@ -1384,35 +1431,30 @@ const dragRafRef = useRef(null);
           renderItem={renderTrayPiece}
           numColumns={TRAY_COLS}
           scrollEnabled={isSelectionMode}
-          removeClippedSubviews={false}
+          removeClippedSubviews={Platform.OS === 'android'}
+          initialNumToRender={24}
+          maxToRenderPerBatch={24}
+          windowSize={7}
+          updateCellsBatchingPeriod={32}
           contentContainerStyle={styles.pieceGrid}
         />
       </BottomSheet>
 
       {dragPreview && (
         <View pointerEvents="none" style={styles.dragPreviewLayer}>
-          <View
+          <Animated.View
             pointerEvents="none"
             style={[
               styles.dragPreviewPiece,
               {
-                // dragPreview.x/y ekran (page) koordinatında tutuluyor;
-                // bu katman container'ın içinde olduğu için container'ın
-                // ekrandaki gerçek konumunu (screenOffset) çıkarmamız gerekiyor.
-                // Aksi halde parça, header/status bar kadar kaymış görünüyordu.
-                left: dragPreview.x - screenOffset.x,
-                top: dragPreview.y - screenOffset.y,
                 width: dragPreview.visualSize,
                 height: dragPreview.visualSize,
+                transform: dragPreviewPan.getTranslateTransform(),
               },
             ]}
           >
-            <PieceImage
-              piece={dragPreview.piece}
-              size={dragPreview.size}
-              highlightColor="#ffffff"
-            />
-          </View>
+            <PieceImage piece={dragPreview.piece} size={dragPreview.size} />
+          </Animated.View>
         </View>
       )}
 
@@ -1492,11 +1534,11 @@ const dragRafRef = useRef(null);
 
 const styles = StyleSheet.create({
   container: {
-  flex: 1,
-  paddingTop: 42,
-  backgroundColor: '#1a1a2e',
-  userSelect: 'none',
-},
+    flex: 1,
+    paddingTop: 42,
+    backgroundColor: '#1a1a2e',
+    userSelect: 'none',
+  },
 
   header: {
     flexDirection: 'row',
@@ -1515,6 +1557,11 @@ const styles = StyleSheet.create({
     borderColor: '#e9456050',
   },
 
+  headerBtnActive: {
+    backgroundColor: '#e94560',
+    borderColor: '#e94560',
+  },
+
   headerBtnText: {
     color: '#e0e0e0',
     fontWeight: '700',
@@ -1530,11 +1577,6 @@ const styles = StyleSheet.create({
 
   disabledBtn: {
     opacity: 0.45,
-  },
-
-  headerBtnActive: {
-    backgroundColor: '#e94560',
-    borderColor: '#e94560',
   },
 
   board: {
@@ -1581,22 +1623,7 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
 
-  progressBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: '#00000066',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    zIndex: 999,
-  },
-
-  progressText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
-  },
+  
 
   sheetLayer: {
     zIndex: 5,
@@ -1609,20 +1636,6 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
 
-  modeBtn: {
-  backgroundColor: '#ffffff22',
-  paddingHorizontal: 12,
-  paddingVertical: 7,
-  borderRadius: 8,
-  marginRight: 8,
-},
-
-modeBtnText: {
-  color: '#fff',
-  fontSize: 12,
-  fontWeight: '800',
-},
-
   indicator: {
     backgroundColor: '#e94560',
     width: 40,
@@ -1633,13 +1646,13 @@ modeBtnText: {
   },
 
   trayHeader: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  paddingHorizontal: 16,
-  paddingVertical: 10,
-  userSelect: 'none',
-},
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    userSelect: 'none',
+  },
 
   trayTitle: {
     color: '#e0e0e0',
@@ -1654,6 +1667,25 @@ modeBtnText: {
     marginTop: 2,
     fontWeight: '600',
     userSelect: 'none',
+  },
+
+  trayActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  modeBtn: {
+    backgroundColor: '#ffffff22',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+
+  modeBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
   },
 
   sendBtn: {
@@ -1682,13 +1714,13 @@ modeBtnText: {
   },
 
   dragTrayPiece: {
-    zIndex: 99999,
-    elevation: 99999,
+    zIndex: 20,
+    elevation: 20,
     overflow: 'visible',
   },
 
   trayPieceDragging: {
-    opacity: 0.12,
+    opacity: 0.25,
   },
 
   selectedTrayPiece: {
@@ -1714,6 +1746,8 @@ modeBtnText: {
 
   dragPreviewPiece: {
     position: 'absolute',
+    left: 0,
+    top: 0,
     overflow: 'visible',
     zIndex: 999999,
     elevation: 999999,
