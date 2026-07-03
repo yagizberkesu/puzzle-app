@@ -1,10 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Animated,
   Dimensions,
   Image,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -22,13 +24,15 @@ const SELECT_MODE_INDEX = 2;
 const TRAY_HEADER_SPACE = 76;
 
 const TRAY_COLS = width > 1200 ? 8 : width > 700 ? 6 : 4;
-const DIFFICULTIES = [16, 25, 36, 64];
+// NOT: 196/256 gerçek cihazlarda test edilmeden varsayılan/önerilen yapma;
+// mevcut SVG mimarisi 144 üstünde performans testi ister (400+ parça için ayrı optimizasyon gerekir).
+const DIFFICULTIES = [36, 64, 100, 144, 196, 256];
 
 const SEND_COUNT = 20;
 const BOARD_PADDING = 16;
 const TAB_RATIO = 0.2;
 
-const FRAME_SNAP_THRESHOLD_MULTIPLIER = 0.42;
+const FRAME_SNAP_THRESHOLD_MULTIPLIER = 0.85;
 const GROUP_SNAP_THRESHOLD_MULTIPLIER = 0.42;
 
 const PRESETS = [
@@ -252,7 +256,7 @@ function getJigsawPath(piece, size) {
   return d;
 }
 
-function PieceImage({ piece, size, strokeColor = '#ffffff88' }) {
+function PieceImage({ piece, size, highlightColor }) {
   const overhang = getPieceOverhang(size);
   const visualSize = getVisualSize(size);
   const path = getJigsawPath(piece, size);
@@ -290,7 +294,15 @@ function PieceImage({ piece, size, strokeColor = '#ffffff88' }) {
           clipPath={`url(#${clipId})`}
         />
 
-        <Path d={path} fill="none" stroke={strokeColor} strokeWidth={0.75} />
+        {highlightColor ? (
+          <Path d={path} fill="none" stroke={highlightColor} strokeWidth={1.4} />
+        ) : (
+          // Kalın tek çizgi yerine ince "bevel/oyuk" hissi veren çift stroke.
+          <>
+            <Path d={path} fill="none" stroke="#00000033" strokeWidth={1.1} />
+            <Path d={path} fill="none" stroke="#ffffff30" strokeWidth={0.45} />
+          </>
+        )}
       </Svg>
     </View>
   );
@@ -561,17 +573,7 @@ function DraggableGroup({ group, onMoveEnd }) {
               },
             ]}
           >
-            <PieceImage
-              piece={piece}
-              size={size}
-              strokeColor={group.anchoredToFrame ? '#7CFF8A' : '#ffffff88'}
-            />
-
-            {group.anchoredToFrame && (
-              <View style={styles.lockedBadge}>
-                <Text style={styles.lockedBadgeText}>✓</Text>
-              </View>
-            )}
+            <PieceImage piece={piece} size={size} />
           </View>
         );
       })}
@@ -618,13 +620,8 @@ function TrayPieceItem({
   });
 },
 
-        onPanResponderMove: (event, gesture) => {
+onPanResponderMove: (event, gesture) => {
   if (isSelectionMode) return;
-
-  pan.setValue({
-    x: gesture.dx,
-    y: gesture.dy,
-  });
 
   const pageX = event.nativeEvent.pageX ?? gesture.moveX;
   const pageY = event.nativeEvent.pageY ?? gesture.moveY;
@@ -688,14 +685,8 @@ function TrayPieceItem({
         <PieceImage
           piece={item}
           size={trayPieceSize}
-          strokeColor={isSelected ? '#BFA2FF' : '#ffffff88'}
+          highlightColor={isSelected ? '#BFA2FF' : undefined}
         />
-
-        {item.isEdge && (
-          <View style={styles.edgeBadge}>
-            <Text style={styles.edgeBadgeText}>K</Text>
-          </View>
-        )}
 
         {isSelected && (
           <View style={styles.selectedBadge}>
@@ -706,7 +697,7 @@ function TrayPieceItem({
     );
   }
 
-  return (
+    return (
     <Animated.View
       {...panResponder.panHandlers}
       style={[
@@ -716,28 +707,21 @@ function TrayPieceItem({
         {
           width: trayVisualSize,
           height: trayVisualSize,
-          transform: pan.getTranslateTransform(),
         },
       ]}
     >
       <PieceImage piece={item} size={trayPieceSize} />
-
-      {item.isEdge && (
-        <View style={styles.edgeBadge}>
-          <Text style={styles.edgeBadgeText}>K</Text>
-        </View>
-      )}
-
-      <View style={styles.dragHintBadge}>
-        <Text style={styles.dragHintText}>↗</Text>
-      </View>
     </Animated.View>
   );
 }
 
 export default function PuzzleScreen() {
   const sheetRef = useRef(null);
-  const boardRef = useRef(null);
+const boardRef = useRef(null);
+const containerRef = useRef(null);
+const screenOffsetRef = useRef({ x: 0, y: 0 });
+const dragPreviewRef = useRef(null);
+const dragRafRef = useRef(null);
 
   const [sourceImage, setSourceImage] = useState(null);
   const [pieces, setPieces] = useState([]);
@@ -746,10 +730,12 @@ export default function PuzzleScreen() {
   const [presetOpen, setPresetOpen] = useState(false);
   const [difficultyOpen, setDifficultyOpen] = useState(false);
   const [referenceOpen, setReferenceOpen] = useState(false);
+  const [hintOn, setHintOn] = useState(false);
 
   const [pendingUri, setPendingUri] = useState(null);
   const [edgeOnly, setEdgeOnly] = useState(false);
   const [selectedPieceIds, setSelectedPieceIds] = useState([]);
+  const [screenOffset, setScreenOffset] = useState({ x: 0, y: 0 });
 
   const [sheetIndex, setSheetIndex] = useState(0);
   const [dragPreview, setDragPreview] = useState(null);
@@ -853,23 +839,76 @@ export default function PuzzleScreen() {
     setSelectedPieceIds([]);
     setDifficultyOpen(false);
     setEdgeOnly(false);
+    setHintOn(false);
     setSheetIndex(0);
     setDragPreview(null);
     setIsTrayPieceDragging(false);
   };
 
-  const pickFromGallery = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const normalizeAssetUri = (uri) => {
+    // Bazı Android sürümlerinde şema (file://) olmadan dönebiliyor,
+    // bu da Image/SvgImage tarafında sessizce hiç yüklenmemesine sebep oluyordu.
+    if (Platform.OS === 'android' && uri && !uri.includes('://')) {
+      return `file://${uri}`;
+    }
+    return uri;
+  };
 
-    if (status !== 'granted') return;
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.8,
-      allowsEditing: false,
+  const verifyImageLoads = (uri) =>
+    new Promise((resolve) => {
+      Image.getSize(
+        uri,
+        () => resolve(true),
+        () => resolve(false)
+      );
     });
 
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      applyImage(result.assets[0].uri);
+  const pickFromGallery = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (status !== 'granted') {
+        Alert.alert(
+          'İzin gerekli',
+          'Galeriden görsel seçebilmek için galeri erişim izni vermelisin.'
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.8,
+        allowsEditing: false,
+        base64: true,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const asset = result.assets[0];
+      const normalizedUri = normalizeAssetUri(asset.uri);
+      const loadsFine = await verifyImageLoads(normalizedUri);
+
+      if (loadsFine) {
+        applyImage(normalizedUri);
+        return;
+      }
+
+      // local URI SvgImage/Image tarafında açılamadı: data-uri fallback.
+      if (asset.base64) {
+        const mime = asset.mimeType || 'image/jpeg';
+        applyImage(`data:${mime};base64,${asset.base64}`);
+        return;
+      }
+
+      Alert.alert(
+        'Görsel yüklenemedi',
+        'Seçilen görsel açılamadı, lütfen farklı bir görsel dene.'
+      );
+    } catch (error) {
+      Alert.alert(
+        'Bir sorun oluştu',
+        'Görsel seçilirken beklenmedik bir hata oluştu, tekrar dener misin?'
+      );
     }
   };
 
@@ -911,25 +950,54 @@ export default function PuzzleScreen() {
   };
 
   const updateDragPreview = useCallback((piece, screenPosition) => {
+  const size = getBoardPieceSize(piece);
+  const visualSize = getVisualSize(size);
+
+  const nextPreview = {
+    piece,
+    size,
+    visualSize,
+    x: screenPosition.x - visualSize / 2,
+    y: screenPosition.y - visualSize / 2,
+  };
+
+  dragPreviewRef.current = nextPreview;
+
+  if (dragRafRef.current) return;
+
+  dragRafRef.current = requestAnimationFrame(() => {
+    dragRafRef.current = null;
+    setDragPreview(dragPreviewRef.current);
+  });
+}, []);
+
+  const clearDragPreview = useCallback(() => {
+  if (dragRafRef.current) {
+    cancelAnimationFrame(dragRafRef.current);
+    dragRafRef.current = null;
+  }
+
+  dragPreviewRef.current = null;
+  setDragPreview(null);
+  setIsTrayPieceDragging(false);
+}, []);
+
+  const sendOnePieceFromTrayToBoard = useCallback(
+  (piece, screenPosition) => {
     const size = getBoardPieceSize(piece);
     const visualSize = getVisualSize(size);
 
-    setDragPreview({
+    const fallbackPreview = {
       piece,
       size,
       visualSize,
       x: screenPosition.x - visualSize / 2,
       y: screenPosition.y - visualSize / 2,
-    });
-  }, []);
+    };
 
-  const clearDragPreview = useCallback(() => {
-    setDragPreview(null);
-    setIsTrayPieceDragging(false);
-  }, []);
+    const finalPreview = dragPreviewRef.current || fallbackPreview;
 
-  const sendOnePieceFromTrayToBoard = useCallback(
-  (piece, screenPosition) => {
+    dragPreviewRef.current = null;
     setDragPreview(null);
     setIsTrayPieceDragging(false);
 
@@ -940,17 +1008,15 @@ export default function PuzzleScreen() {
 
     const sheetTopY = height - currentSheetHeight;
 
-    const releasedInsideTray = screenPosition.y >= sheetTopY - 8;
+    const previewCenterY = finalPreview.y + finalPreview.visualSize / 2;
+    const releasedInsideTray = previewCenterY >= sheetTopY;
 
     if (releasedInsideTray) {
       return;
     }
 
-    const size = getBoardPieceSize(piece);
-    const visualSize = getVisualSize(size);
-
-    const rawBoardX = screenPosition.x - boardWindowLayout.x;
-    const rawBoardY = screenPosition.y - boardWindowLayout.y;
+    const rawBoardX = finalPreview.x - boardWindowLayout.x;
+    const rawBoardY = finalPreview.y - boardWindowLayout.y;
 
     const maxX = Math.max(
       BOARD_PADDING,
@@ -963,14 +1029,8 @@ export default function PuzzleScreen() {
     );
 
     const customPosition = {
-      x: Math.min(
-        Math.max(rawBoardX - visualSize / 2, BOARD_PADDING),
-        maxX
-      ),
-      y: Math.min(
-        Math.max(rawBoardY - visualSize / 2, BOARD_PADDING),
-        maxY
-      ),
+      x: Math.min(Math.max(rawBoardX, BOARD_PADDING), maxX),
+      y: Math.min(Math.max(rawBoardY, BOARD_PADDING), maxY),
     };
 
     const rawGroup = createGroupFromPiece(
@@ -1090,6 +1150,13 @@ export default function PuzzleScreen() {
     [maybeSnapGroupToFrame]
   );
 
+
+  const exitSelectionMode = useCallback(() => {
+  setSelectedPieceIds([]);
+  setSheetIndex(0);
+  sheetRef.current?.snapToIndex(0);
+}, []);
+
   const renderTrayPiece = useCallback(
     ({ item }) => {
       const isSelected = selectedPieceIds.includes(item.id);
@@ -1125,7 +1192,18 @@ export default function PuzzleScreen() {
   );
 
   return (
-    <View style={styles.container}>
+    <View
+      ref={containerRef}
+      style={styles.container}
+      onLayout={() => {
+        requestAnimationFrame(() => {
+          containerRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
+            screenOffsetRef.current = { x: pageX, y: pageY };
+            setScreenOffset({ x: pageX, y: pageY });
+          });
+        });
+      }}
+    >
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBtn}
@@ -1140,6 +1218,20 @@ export default function PuzzleScreen() {
           onPress={() => setReferenceOpen(true)}
         >
           <Text style={styles.headerBtnText}>👁️ Referans</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.headerBtn,
+            hintOn && styles.headerBtnActive,
+            !sourceImage && styles.disabledBtn,
+          ]}
+          disabled={!sourceImage}
+          onPress={() => setHintOn((prev) => !prev)}
+        >
+          <Text style={styles.headerBtnText}>
+            {hintOn ? '💡 İpucu Kapat' : '💡 İpucu'}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -1172,17 +1264,17 @@ export default function PuzzleScreen() {
           setBoardLayout(event.nativeEvent.layout);
 
           requestAnimationFrame(() => {
-            boardRef.current?.measureInWindow(
-              (x, y, measuredWidth, measuredHeight) => {
-                setBoardWindowLayout({
-                  x,
-                  y,
-                  width: measuredWidth,
-                  height: measuredHeight,
-                });
-              }
-            );
-          });
+  boardRef.current?.measure(
+    (_x, _y, measuredWidth, measuredHeight, pageX, pageY) => {
+      setBoardWindowLayout({
+        x: pageX,
+        y: pageY,
+        width: measuredWidth,
+        height: measuredHeight,
+      });
+    }
+  );
+});
         }}
       >
         {!sourceImage && (
@@ -1190,35 +1282,35 @@ export default function PuzzleScreen() {
         )}
 
         {sourceImage && activePiece && (
-          <>
-            <View
-              pointerEvents="none"
-              style={[
-                styles.frameArea,
-                {
-                  left: frameOrigin.x,
-                  top: frameOrigin.y,
-                  width: referenceWidth,
-                  height: referenceHeight,
-                },
-              ]}
-            />
+          <View
+            pointerEvents="none"
+            style={[
+              styles.frameArea,
+              {
+                left: frameOrigin.x,
+                top: frameOrigin.y,
+                width: referenceWidth,
+                height: referenceHeight,
+              },
+            ]}
+          />
+        )}
 
-            <Image
-              pointerEvents="none"
-              source={{ uri: sourceImage }}
-              style={[
-                styles.boardReferenceImage,
-                {
-                  left: frameOrigin.x,
-                  top: frameOrigin.y,
-                  width: referenceWidth,
-                  height: referenceHeight,
-                },
-              ]}
-              resizeMode="cover"
-            />
-          </>
+        {sourceImage && activePiece && hintOn && (
+          <Image
+            pointerEvents="none"
+            source={{ uri: sourceImage }}
+            style={[
+              styles.boardReferenceImage,
+              {
+                left: frameOrigin.x,
+                top: frameOrigin.y,
+                width: referenceWidth,
+                height: referenceHeight,
+              },
+            ]}
+            resizeMode="cover"
+          />
         )}
 
         {sourceImage && boardGroups.length === 0 && (
@@ -1268,6 +1360,12 @@ export default function PuzzleScreen() {
             </Text>
           </View>
 
+          {isSelectionMode && (
+  <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
+    <Text style={styles.modeBtnText}>Sürükle</Text>
+  </TouchableOpacity>
+)}
+
           <TouchableOpacity
             style={[
               styles.sendBtn,
@@ -1298,8 +1396,12 @@ export default function PuzzleScreen() {
             style={[
               styles.dragPreviewPiece,
               {
-                left: dragPreview.x,
-                top: dragPreview.y,
+                // dragPreview.x/y ekran (page) koordinatında tutuluyor;
+                // bu katman container'ın içinde olduğu için container'ın
+                // ekrandaki gerçek konumunu (screenOffset) çıkarmamız gerekiyor.
+                // Aksi halde parça, header/status bar kadar kaymış görünüyordu.
+                left: dragPreview.x - screenOffset.x,
+                top: dragPreview.y - screenOffset.y,
                 width: dragPreview.visualSize,
                 height: dragPreview.visualSize,
               },
@@ -1308,7 +1410,7 @@ export default function PuzzleScreen() {
             <PieceImage
               piece={dragPreview.piece}
               size={dragPreview.size}
-              strokeColor="#ffffff"
+              highlightColor="#ffffff"
             />
           </View>
         </View>
@@ -1430,6 +1532,11 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
 
+  headerBtnActive: {
+    backgroundColor: '#e94560',
+    borderColor: '#e94560',
+  },
+
   board: {
     flex: 1,
     marginHorizontal: 12,
@@ -1452,7 +1559,7 @@ const styles = StyleSheet.create({
 
   boardReferenceImage: {
     position: 'absolute',
-    opacity: 0.11,
+    opacity: 0.4,
     borderRadius: 8,
   },
 
@@ -1472,24 +1579,6 @@ const styles = StyleSheet.create({
   groupPiece: {
     position: 'absolute',
     overflow: 'visible',
-  },
-
-  lockedBadge: {
-    position: 'absolute',
-    right: 2,
-    top: 2,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#7CFF8A',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  lockedBadgeText: {
-    color: '#102010',
-    fontSize: 11,
-    fontWeight: '900',
   },
 
   progressBadge: {
@@ -1519,6 +1608,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#0f3460',
     overflow: 'visible',
   },
+
+  modeBtn: {
+  backgroundColor: '#ffffff22',
+  paddingHorizontal: 12,
+  paddingVertical: 7,
+  borderRadius: 8,
+  marginRight: 8,
+},
+
+modeBtnText: {
+  color: '#fff',
+  fontSize: 12,
+  fontWeight: '800',
+},
 
   indicator: {
     backgroundColor: '#e94560',
@@ -1597,42 +1700,6 @@ const styles = StyleSheet.create({
   pieceImageBox: {
     overflow: 'visible',
     backgroundColor: 'transparent',
-  },
-
-  edgeBadge: {
-    position: 'absolute',
-    right: 4,
-    top: 4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#ffd166',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  edgeBadgeText: {
-    color: '#111',
-    fontSize: 10,
-    fontWeight: '900',
-  },
-
-  dragHintBadge: {
-    position: 'absolute',
-    right: 2,
-    bottom: 2,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#ffffffdd',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  dragHintText: {
-    color: '#0f3460',
-    fontSize: 13,
-    fontWeight: '900',
   },
 
   dragPreviewLayer: {
