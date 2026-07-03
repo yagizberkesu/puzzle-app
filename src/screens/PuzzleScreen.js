@@ -10,6 +10,8 @@ import {
   Text,
   TouchableOpacity,
   View,
+  updateDragPreview,
+clearDragPreview,
 } from 'react-native';
 
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
@@ -454,8 +456,12 @@ function DraggableGroup({ group, onMoveEnd }) {
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !group.anchoredToFrame,
-        onMoveShouldSetPanResponder: () => !group.anchoredToFrame,
+  onStartShouldSetPanResponder: () => !isSelectionMode,
+  onStartShouldSetPanResponderCapture: () => !isSelectionMode,
+  onMoveShouldSetPanResponder: () => !isSelectionMode,
+  onMoveShouldSetPanResponderCapture: () => !isSelectionMode,
+  onPanResponderTerminationRequest: () => false,
+  onShouldBlockNativeResponder: () => true,
 
         onPanResponderGrant: () => {
           if (group.anchoredToFrame) return;
@@ -556,35 +562,80 @@ function TrayPieceItem({
   trayPieceSize,
   onToggleSelect,
   onDragToBoard,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
 }) {
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const [isDragging, setIsDragging] = useState(false);
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => !isSelectionMode,
+        onStartShouldSetPanResponderCapture: () => !isSelectionMode,
         onMoveShouldSetPanResponder: () => !isSelectionMode,
+        onMoveShouldSetPanResponderCapture: () => !isSelectionMode,
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
 
-        onPanResponderMove: Animated.event(
-          [null, { dx: pan.x, dy: pan.y }],
-          { useNativeDriver: false }
-        ),
+        onPanResponderGrant: (event) => {
+          if (isSelectionMode) return;
 
-        onPanResponderRelease: (_, gesture) => {
-          if (!isSelectionMode) {
-            pan.setValue({ x: 0, y: 0 });
-            onDragToBoard(item, {
-              x: gesture.moveX,
-              y: gesture.moveY,
-            });
-          }
+          setIsDragging(true);
+
+          onDragStart?.(item, {
+            x: event.nativeEvent.pageX,
+            y: event.nativeEvent.pageY,
+          });
         },
 
+        onPanResponderMove: (_, gesture) => {
+          if (isSelectionMode) return;
+
+          pan.setValue({
+            x: gesture.dx,
+            y: gesture.dy,
+          });
+
+          onDragMove?.(item, {
+            x: gesture.moveX,
+            y: gesture.moveY,
+          });
+        },
+
+        onPanResponderRelease: (_, gesture) => {
+  if (!isSelectionMode) {
+    setIsDragging(false);
+
+    pan.setValue({ x: 0, y: 0 });
+
+    onDragToBoard(item, {
+      x: gesture.moveX,
+      y: gesture.moveY,
+    });
+
+    requestAnimationFrame(() => {
+      onDragEnd?.();
+    });
+  }
+},
+
         onPanResponderTerminate: () => {
+          setIsDragging(false);
+          onDragEnd?.();
           pan.setValue({ x: 0, y: 0 });
         },
       }),
-    [isSelectionMode, item, onDragToBoard, pan]
+    [
+      isSelectionMode,
+      item,
+      onDragToBoard,
+      onDragStart,
+      onDragMove,
+      onDragEnd,
+      pan,
+    ]
   );
 
   if (isSelectionMode) {
@@ -628,6 +679,7 @@ function TrayPieceItem({
       style={[
         styles.trayPiece,
         styles.dragTrayPiece,
+        isDragging && styles.trayPieceDragging,
         {
           width: trayVisualSize,
           height: trayVisualSize,
@@ -664,7 +716,9 @@ export default function PuzzleScreen() {
   const [pendingUri, setPendingUri] = useState(null);
   const [edgeOnly, setEdgeOnly] = useState(false);
   const [selectedPieceIds, setSelectedPieceIds] = useState([]);
-  const [sheetIndex, setSheetIndex] = useState(0);
+const [sheetIndex, setSheetIndex] = useState(0);
+const [dragPreview, setDragPreview] = useState(null);
+const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
   const [boardLayout, setBoardLayout] = useState({
     x: 0,
     y: 0,
@@ -810,8 +864,27 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
     );
   };
 
+  const updateDragPreview = useCallback((piece, screenPosition) => {
+  const size = getBoardPieceSize(piece);
+  const visualSize = getVisualSize(size);
+
+  setDragPreview({
+    piece,
+    size,
+    visualSize,
+    x: screenPosition.x - visualSize / 2,
+    y: screenPosition.y - visualSize / 2,
+  });
+}, []);
+
+const clearDragPreview = useCallback(() => {
+  setDragPreview(null);
+}, []);
+
   const sendOnePieceFromTrayToBoard = useCallback(
     (piece, screenPosition) => {
+          setDragPreview(null);
+    setIsTrayPieceDragging?.(false);
       const boardX = screenPosition.x - boardLayout.x;
       const boardY = screenPosition.y - boardLayout.y;
 
@@ -947,14 +1020,17 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
 
       return (
         <TrayPieceItem
-          item={item}
-          isSelected={isSelected}
-          isSelectionMode={isSelectionMode}
-          trayVisualSize={trayVisualSize}
-          trayPieceSize={trayPieceSize}
-          onToggleSelect={toggleTrayPieceSelection}
-          onDragToBoard={sendOnePieceFromTrayToBoard}
-        />
+  item={item}
+  isSelected={isSelected}
+  isSelectionMode={isSelectionMode}
+  trayVisualSize={trayVisualSize}
+  trayPieceSize={trayPieceSize}
+  onToggleSelect={toggleTrayPieceSelection}
+  onDragToBoard={sendOnePieceFromTrayToBoard}
+  onDragStart={updateDragPreview}
+  onDragMove={updateDragPreview}
+  onDragEnd={clearDragPreview}
+/>
       );
     },
     [
@@ -1088,21 +1164,24 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
   snapPoints={snapPoints}
   onChange={setSheetIndex}
   enableContentPanningGesture={false}
-  enableHandlePanningGesture={true}
+  enableHandlePanningGesture={!isTrayPieceDragging}
   backgroundStyle={styles.sheetBg}
-  handleIndicatorStyle={styles.indicator}
+  handleIndicatorStyle={[
+    styles.indicator,
+    isTrayPieceDragging && styles.indicatorDisabled,
+  ]}
 >
         <View style={styles.trayHeader}>
           <View>
-            <Text style={styles.trayTitle}>
-              Parçalar ({visiblePieces.length})
-            </Text>
+            <Text selectable={false} style={styles.trayTitle}>
+  Parçalar ({visiblePieces.length})
+</Text>
 
-            <Text style={styles.trayModeText}>
-              {isSelectionMode
-                ? 'Seçim modu açık'
-                : 'Sürükle-bırak modu'}
-            </Text>
+<Text selectable={false} style={styles.trayModeText}>
+  {isSelectionMode
+    ? 'Seçim modu açık'
+    : 'Sürükle-bırak modu'}
+</Text>
           </View>
 
           <TouchableOpacity
@@ -1118,15 +1197,40 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
         </View>
 
         <BottomSheetFlatList
-          data={visiblePieces}
-          keyExtractor={(item) => item.id}
-          renderItem={renderTrayPiece}
-          numColumns={TRAY_COLS}
-          contentContainerStyle={styles.pieceGrid}
-        />
+  data={visiblePieces}
+  keyExtractor={(item) => item.id}
+  renderItem={renderTrayPiece}
+  numColumns={TRAY_COLS}
+  scrollEnabled={isSelectionMode}
+  removeClippedSubviews={false}
+  contentContainerStyle={styles.pieceGrid}
+/>
       </BottomSheet>
 
-      <Modal visible={presetOpen} transparent animationType="fade">
+{dragPreview && (
+  <View pointerEvents="none" style={styles.dragPreviewLayer}>
+    <View
+      pointerEvents="none"
+      style={[
+        styles.dragPreviewPiece,
+        {
+          left: dragPreview.x,
+          top: dragPreview.y,
+          width: dragPreview.visualSize,
+          height: dragPreview.visualSize,
+        },
+      ]}
+    >
+      <PieceImage
+        piece={dragPreview.piece}
+        size={dragPreview.size}
+        strokeColor="#ffffff"
+      />
+    </View>
+  </View>
+)}
+
+<Modal visible={presetOpen} transparent animationType="fade">
         <Pressable
           style={styles.modalOverlay}
           onPress={() => setPresetOpen(false)}
@@ -1332,7 +1436,14 @@ const styles = StyleSheet.create({
 
   sheetBg: {
     backgroundColor: '#0f3460',
+    overflow: 'visible',
   },
+
+  sheetLayer: {
+  zIndex: 5,
+  elevation: 5,
+  overflow: 'visible',
+},
 
   indicator: {
     backgroundColor: '#e94560',
@@ -1348,17 +1459,19 @@ const styles = StyleSheet.create({
   },
 
   trayTitle: {
-    color: '#e0e0e0',
-    fontWeight: '800',
-    fontSize: 15,
-  },
+  color: '#e0e0e0',
+  fontWeight: '800',
+  fontSize: 15,
+  userSelect: 'none',
+},
 
   trayModeText: {
-    color: '#ffffff88',
-    fontSize: 11,
-    marginTop: 2,
-    fontWeight: '600',
-  },
+  color: '#ffffff88',
+  fontSize: 11,
+  marginTop: 2,
+  fontWeight: '600',
+  userSelect: 'none',
+},
 
   sendBtn: {
     backgroundColor: '#e94560',
@@ -1374,9 +1487,10 @@ const styles = StyleSheet.create({
   },
 
   pieceGrid: {
-    paddingHorizontal: 8,
-    paddingBottom: 80,
-  },
+  paddingHorizontal: 8,
+  paddingBottom: 80,
+  overflow: 'visible',
+},
 
   trayPiece: {
     margin: 4,
@@ -1385,9 +1499,10 @@ const styles = StyleSheet.create({
   },
 
   dragTrayPiece: {
-    zIndex: 999,
-    elevation: 999,
-  },
+  zIndex: 99999,
+  elevation: 99999,
+  overflow: 'visible',
+},
 
   selectedTrayPiece: {
     borderWidth: 2,
@@ -1418,6 +1533,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
+  dragPreviewLayer: {
+  position: 'absolute',
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0,
+  zIndex: 999999,
+  elevation: 999999,
+},
+
+dragPreviewPiece: {
+  position: 'absolute',
+  overflow: 'visible',
+  zIndex: 999999,
+  elevation: 999999,
+},
+
   dragHintBadge: {
     position: 'absolute',
     right: 2,
@@ -1429,6 +1561,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+
+  trayPieceDragging: {
+  opacity: 0.12,
+},
+
+dragPreviewLayer: {
+  position: 'absolute',
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0,
+  zIndex: 999999,
+  elevation: 999999,
+  pointerEvents: 'none',
+},
+
+dragPreviewPiece: {
+  position: 'absolute',
+  overflow: 'visible',
+  zIndex: 999999,
+  elevation: 999999,
+},
 
   dragHintText: {
     color: '#0f3460',
@@ -1527,6 +1681,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     alignItems: 'center',
   },
+
+  indicatorDisabled: {
+  opacity: 0.2,
+},
 
   diffBtnText: {
     color: '#fff',
