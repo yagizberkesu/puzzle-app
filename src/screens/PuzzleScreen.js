@@ -10,8 +10,6 @@ import {
   Text,
   TouchableOpacity,
   View,
-  updateDragPreview,
-clearDragPreview,
 } from 'react-native';
 
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
@@ -19,6 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Svg, { Defs, ClipPath, Path, Image as SvgImage } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
+
 const SELECT_MODE_INDEX = 2;
 const TRAY_HEADER_SPACE = 76;
 
@@ -28,6 +27,7 @@ const DIFFICULTIES = [16, 25, 36, 64];
 const SEND_COUNT = 20;
 const BOARD_PADDING = 16;
 const TAB_RATIO = 0.2;
+
 const FRAME_SNAP_THRESHOLD_MULTIPLIER = 0.42;
 const GROUP_SNAP_THRESHOLD_MULTIPLIER = 0.42;
 
@@ -256,11 +256,24 @@ function PieceImage({ piece, size, strokeColor = '#ffffff88' }) {
   const overhang = getPieceOverhang(size);
   const visualSize = getVisualSize(size);
   const path = getJigsawPath(piece, size);
-  const clipId = `clip-${piece.id}`;
+  const safeId = String(piece.id).replace(/[^a-zA-Z0-9_]/g, '_');
+  const clipId = `clip_${safeId}_${Math.round(size * 1000)}`;
 
   return (
-    <View style={[styles.pieceImageBox, { width: visualSize, height: visualSize }]}>
-      <Svg width={visualSize} height={visualSize} viewBox={`0 0 ${visualSize} ${visualSize}`}>
+    <View
+      style={[
+        styles.pieceImageBox,
+        {
+          width: visualSize,
+          height: visualSize,
+        },
+      ]}
+    >
+      <Svg
+        width={visualSize}
+        height={visualSize}
+        viewBox={`0 0 ${visualSize} ${visualSize}`}
+      >
         <Defs>
           <ClipPath id={clipId}>
             <Path d={path} />
@@ -289,16 +302,30 @@ function areAdjacentPieces(a, b) {
   return rowDiff + colDiff === 1;
 }
 
-function createGroupFromPiece(piece, index, frameOrigin, boardLayout, customPosition) {
+function createGroupFromPiece(
+  piece,
+  index,
+  frameOrigin,
+  boardLayout,
+  customPosition
+) {
   const size = getBoardPieceSize(piece);
   const visualSize = getVisualSize(size);
   const frameHeight = size * piece.rows;
 
   const defaultX = frameOrigin.x + (index % 4) * (visualSize + 14);
-  const defaultY = frameOrigin.y + frameHeight + 34 + Math.floor(index / 4) * (visualSize + 14);
+  const defaultY =
+    frameOrigin.y + frameHeight + 34 + Math.floor(index / 4) * (visualSize + 14);
 
-  const maxX = Math.max(BOARD_PADDING, (boardLayout?.width || width) - visualSize - BOARD_PADDING);
-  const maxY = Math.max(BOARD_PADDING, (boardLayout?.height || 700) - visualSize - BOARD_PADDING);
+  const maxX = Math.max(
+    BOARD_PADDING,
+    (boardLayout?.width || width) - visualSize - BOARD_PADDING
+  );
+
+  const maxY = Math.max(
+    BOARD_PADDING,
+    (boardLayout?.height || 700) - visualSize - BOARD_PADDING
+  );
 
   const rawX = customPosition?.x ?? defaultX;
   const rawY = customPosition?.y ?? defaultY;
@@ -456,12 +483,10 @@ function DraggableGroup({ group, onMoveEnd }) {
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-  onStartShouldSetPanResponder: () => !isSelectionMode,
-  onStartShouldSetPanResponderCapture: () => !isSelectionMode,
-  onMoveShouldSetPanResponder: () => !isSelectionMode,
-  onMoveShouldSetPanResponderCapture: () => !isSelectionMode,
-  onPanResponderTerminationRequest: () => false,
-  onShouldBlockNativeResponder: () => true,
+        onStartShouldSetPanResponder: () => !group.anchoredToFrame,
+        onMoveShouldSetPanResponder: () => !group.anchoredToFrame,
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
 
         onPanResponderGrant: () => {
           if (group.anchoredToFrame) return;
@@ -579,52 +604,60 @@ function TrayPieceItem({
         onPanResponderTerminationRequest: () => false,
         onShouldBlockNativeResponder: () => true,
 
-        onPanResponderGrant: (event) => {
-          if (isSelectionMode) return;
+        onPanResponderGrant: (event, gesture) => {
+  if (isSelectionMode) return;
 
-          setIsDragging(true);
+  const pageX = event.nativeEvent.pageX ?? gesture.x0;
+  const pageY = event.nativeEvent.pageY ?? gesture.y0;
 
-          onDragStart?.(item, {
-            x: event.nativeEvent.pageX,
-            y: event.nativeEvent.pageY,
-          });
-        },
+  setIsDragging(true);
 
-        onPanResponderMove: (_, gesture) => {
-          if (isSelectionMode) return;
+  onDragStart?.(item, {
+    x: pageX,
+    y: pageY,
+  });
+},
 
-          pan.setValue({
-            x: gesture.dx,
-            y: gesture.dy,
-          });
+        onPanResponderMove: (event, gesture) => {
+  if (isSelectionMode) return;
 
-          onDragMove?.(item, {
-            x: gesture.moveX,
-            y: gesture.moveY,
-          });
-        },
+  pan.setValue({
+    x: gesture.dx,
+    y: gesture.dy,
+  });
 
-        onPanResponderRelease: (_, gesture) => {
-  if (!isSelectionMode) {
-    setIsDragging(false);
+  const pageX = event.nativeEvent.pageX ?? gesture.moveX;
+  const pageY = event.nativeEvent.pageY ?? gesture.moveY;
 
-    pan.setValue({ x: 0, y: 0 });
+  onDragMove?.(item, {
+    x: pageX,
+    y: pageY,
+  });
+},
 
-    onDragToBoard(item, {
-      x: gesture.moveX,
-      y: gesture.moveY,
-    });
+        onPanResponderRelease: (event, gesture) => {
+  if (isSelectionMode) return;
 
-    requestAnimationFrame(() => {
-      onDragEnd?.();
-    });
-  }
+  const pageX = event.nativeEvent.pageX ?? gesture.moveX;
+  const pageY = event.nativeEvent.pageY ?? gesture.moveY;
+
+  setIsDragging(false);
+  pan.setValue({ x: 0, y: 0 });
+
+  onDragToBoard(item, {
+    x: pageX,
+    y: pageY,
+  });
+
+  requestAnimationFrame(() => {
+    onDragEnd?.();
+  });
 },
 
         onPanResponderTerminate: () => {
           setIsDragging(false);
-          onDragEnd?.();
           pan.setValue({ x: 0, y: 0 });
+          onDragEnd?.();
         },
       }),
     [
@@ -704,6 +737,7 @@ function TrayPieceItem({
 
 export default function PuzzleScreen() {
   const sheetRef = useRef(null);
+  const boardRef = useRef(null);
 
   const [sourceImage, setSourceImage] = useState(null);
   const [pieces, setPieces] = useState([]);
@@ -716,9 +750,11 @@ export default function PuzzleScreen() {
   const [pendingUri, setPendingUri] = useState(null);
   const [edgeOnly, setEdgeOnly] = useState(false);
   const [selectedPieceIds, setSelectedPieceIds] = useState([]);
-const [sheetIndex, setSheetIndex] = useState(0);
-const [dragPreview, setDragPreview] = useState(null);
-const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
+
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [dragPreview, setDragPreview] = useState(null);
+  const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
+
   const [boardLayout, setBoardLayout] = useState({
     x: 0,
     y: 0,
@@ -726,7 +762,15 @@ const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
     height: 600,
   });
 
-const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
+  const [boardWindowLayout, setBoardWindowLayout] = useState({
+    x: 0,
+    y: 0,
+    width,
+    height: 600,
+  });
+
+  const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
+
   const activePiece = boardGroups[0]?.pieces?.[0] || pieces[0] || null;
   const activePieceSize = getBoardPieceSize(activePiece);
   const frameOrigin = getFrameOrigin(activePiece, boardLayout);
@@ -736,16 +780,16 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
   const trayVisualSize = getVisualSize(trayPieceSize);
 
   const snapPoints = useMemo(() => {
-  const oneRowHeight = TRAY_HEADER_SPACE + trayVisualSize + 18;
-  const twoRowHeight = TRAY_HEADER_SPACE + trayVisualSize * 2 + 32;
-  const fullHeight = height * 0.84;
+    const oneRowHeight = TRAY_HEADER_SPACE + trayVisualSize + 18;
+    const twoRowHeight = TRAY_HEADER_SPACE + trayVisualSize * 2 + 32;
+    const fullHeight = height * 0.84;
 
-  return [
-    Math.min(oneRowHeight, height * 0.48),
-    Math.min(twoRowHeight, height * 0.72),
-    fullHeight,
-  ];
-}, [trayVisualSize]);
+    return [
+      Math.min(oneRowHeight, height * 0.48),
+      Math.min(twoRowHeight, height * 0.72),
+      fullHeight,
+    ];
+  }, [trayVisualSize]);
 
   const visiblePieces = useMemo(() => {
     if (!edgeOnly) return pieces;
@@ -810,6 +854,8 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
     setDifficultyOpen(false);
     setEdgeOnly(false);
     setSheetIndex(0);
+    setDragPreview(null);
+    setIsTrayPieceDragging(false);
   };
 
   const pickFromGallery = async () => {
@@ -865,61 +911,91 @@ const isSelectionMode = sheetIndex === SELECT_MODE_INDEX;
   };
 
   const updateDragPreview = useCallback((piece, screenPosition) => {
-  const size = getBoardPieceSize(piece);
-  const visualSize = getVisualSize(size);
+    const size = getBoardPieceSize(piece);
+    const visualSize = getVisualSize(size);
 
-  setDragPreview({
-    piece,
-    size,
-    visualSize,
-    x: screenPosition.x - visualSize / 2,
-    y: screenPosition.y - visualSize / 2,
-  });
-}, []);
+    setDragPreview({
+      piece,
+      size,
+      visualSize,
+      x: screenPosition.x - visualSize / 2,
+      y: screenPosition.y - visualSize / 2,
+    });
+  }, []);
 
-const clearDragPreview = useCallback(() => {
-  setDragPreview(null);
-}, []);
+  const clearDragPreview = useCallback(() => {
+    setDragPreview(null);
+    setIsTrayPieceDragging(false);
+  }, []);
 
   const sendOnePieceFromTrayToBoard = useCallback(
-    (piece, screenPosition) => {
-          setDragPreview(null);
-    setIsTrayPieceDragging?.(false);
-      const boardX = screenPosition.x - boardLayout.x;
-      const boardY = screenPosition.y - boardLayout.y;
+  (piece, screenPosition) => {
+    setDragPreview(null);
+    setIsTrayPieceDragging(false);
 
-      const isInsideBoard =
-        boardX >= 0 &&
-        boardX <= boardLayout.width &&
-        boardY >= 0 &&
-        boardY <= boardLayout.height;
+    const currentSheetHeight =
+      typeof snapPoints[sheetIndex] === 'number'
+        ? snapPoints[sheetIndex]
+        : height * 0.2;
 
-      const size = getBoardPieceSize(piece);
-      const visualSize = getVisualSize(size);
+    const sheetTopY = height - currentSheetHeight;
 
-      const customPosition = isInsideBoard
-        ? {
-            x: boardX - visualSize / 2,
-            y: boardY - visualSize / 2,
-          }
-        : null;
+    const releasedInsideTray = screenPosition.y >= sheetTopY - 8;
 
-      const rawGroup = createGroupFromPiece(
-        piece,
-        0,
-        frameOrigin,
-        boardLayout,
-        customPosition
-      );
+    if (releasedInsideTray) {
+      return;
+    }
 
-      const newGroup = maybeSnapGroupToFrame(rawGroup);
+    const size = getBoardPieceSize(piece);
+    const visualSize = getVisualSize(size);
 
-      setBoardGroups((prev) => [...prev, newGroup]);
-      setPieces((prev) => prev.filter((p) => p.id !== piece.id));
-      setSelectedPieceIds((prev) => prev.filter((id) => id !== piece.id));
-    },
-    [boardLayout, frameOrigin, maybeSnapGroupToFrame]
-  );
+    const rawBoardX = screenPosition.x - boardWindowLayout.x;
+    const rawBoardY = screenPosition.y - boardWindowLayout.y;
+
+    const maxX = Math.max(
+      BOARD_PADDING,
+      boardLayout.width - visualSize - BOARD_PADDING
+    );
+
+    const maxY = Math.max(
+      BOARD_PADDING,
+      boardLayout.height - visualSize - BOARD_PADDING
+    );
+
+    const customPosition = {
+      x: Math.min(
+        Math.max(rawBoardX - visualSize / 2, BOARD_PADDING),
+        maxX
+      ),
+      y: Math.min(
+        Math.max(rawBoardY - visualSize / 2, BOARD_PADDING),
+        maxY
+      ),
+    };
+
+    const rawGroup = createGroupFromPiece(
+      piece,
+      0,
+      frameOrigin,
+      boardLayout,
+      customPosition
+    );
+
+    const newGroup = maybeSnapGroupToFrame(rawGroup);
+
+    setBoardGroups((prev) => [...prev, newGroup]);
+    setPieces((prev) => prev.filter((p) => p.id !== piece.id));
+    setSelectedPieceIds((prev) => prev.filter((id) => id !== piece.id));
+  },
+  [
+    boardLayout,
+    boardWindowLayout,
+    frameOrigin,
+    maybeSnapGroupToFrame,
+    sheetIndex,
+    snapPoints,
+  ]
+);
 
   const clearLooseSinglePieces = () => {
     const looseGroups = boardGroups.filter(
@@ -1020,27 +1096,32 @@ const clearDragPreview = useCallback(() => {
 
       return (
         <TrayPieceItem
-  item={item}
-  isSelected={isSelected}
-  isSelectionMode={isSelectionMode}
-  trayVisualSize={trayVisualSize}
-  trayPieceSize={trayPieceSize}
-  onToggleSelect={toggleTrayPieceSelection}
-  onDragToBoard={sendOnePieceFromTrayToBoard}
-  onDragStart={updateDragPreview}
-  onDragMove={updateDragPreview}
-  onDragEnd={clearDragPreview}
-/>
+          item={item}
+          isSelected={isSelected}
+          isSelectionMode={isSelectionMode}
+          trayVisualSize={trayVisualSize}
+          trayPieceSize={trayPieceSize}
+          onToggleSelect={toggleTrayPieceSelection}
+          onDragToBoard={sendOnePieceFromTrayToBoard}
+          onDragStart={(piece, position) => {
+            setIsTrayPieceDragging(true);
+            updateDragPreview(piece, position);
+          }}
+          onDragMove={updateDragPreview}
+          onDragEnd={clearDragPreview}
+        />
       );
     },
     [
-      selectedPieceIds,
-      isSelectionMode,
-      trayPieceSize,
-      trayVisualSize,
-      toggleTrayPieceSelection,
-      sendOnePieceFromTrayToBoard,
-    ]
+  selectedPieceIds,
+  isSelectionMode,
+  trayPieceSize,
+  trayVisualSize,
+  toggleTrayPieceSelection,
+  sendOnePieceFromTrayToBoard,
+  updateDragPreview,
+  clearDragPreview,
+]
   );
 
   return (
@@ -1070,23 +1151,38 @@ const clearDragPreview = useCallback(() => {
             {edgeOnly ? 'Tüm Parçalar' : 'Kenarlar'}
           </Text>
         </TouchableOpacity>
+
         <TouchableOpacity
-  style={[
-    styles.headerBtn,
-    styles.cleanHeaderBtn,
-    looseSingleGroups.length === 0 && styles.disabledBtn,
-  ]}
-  disabled={looseSingleGroups.length === 0}
-  onPress={clearLooseSinglePieces}
->
-  <Text style={styles.headerBtnText}>🧹</Text>
-</TouchableOpacity>
+          style={[
+            styles.headerBtn,
+            styles.cleanHeaderBtn,
+            looseSingleGroups.length === 0 && styles.disabledBtn,
+          ]}
+          disabled={looseSingleGroups.length === 0}
+          onPress={clearLooseSinglePieces}
+        >
+          <Text style={styles.headerBtnText}>🧹</Text>
+        </TouchableOpacity>
       </View>
 
       <View
+        ref={boardRef}
         style={styles.board}
         onLayout={(event) => {
           setBoardLayout(event.nativeEvent.layout);
+
+          requestAnimationFrame(() => {
+            boardRef.current?.measureInWindow(
+              (x, y, measuredWidth, measuredHeight) => {
+                setBoardWindowLayout({
+                  x,
+                  y,
+                  width: measuredWidth,
+                  height: measuredHeight,
+                });
+              }
+            );
+          });
         }}
       >
         {!sourceImage && (
@@ -1138,17 +1234,6 @@ const clearDragPreview = useCallback(() => {
           </View>
         )}
 
-        {looseSingleGroups.length > 0 && (
-          <TouchableOpacity
-            style={styles.floatingCleanBtn}
-            onPress={clearLooseSinglePieces}
-          >
-            <Text style={styles.floatingCleanText}>
-              🧹 Teklileri Topla ({looseSingleGroups.length})
-            </Text>
-          </TouchableOpacity>
-        )}
-
         {orderedBoardGroups.map((group) => (
           <DraggableGroup
             key={group.id}
@@ -1159,29 +1244,28 @@ const clearDragPreview = useCallback(() => {
       </View>
 
       <BottomSheet
-  ref={sheetRef}
-  index={0}
-  snapPoints={snapPoints}
-  onChange={setSheetIndex}
-  enableContentPanningGesture={false}
-  enableHandlePanningGesture={!isTrayPieceDragging}
-  backgroundStyle={styles.sheetBg}
-  handleIndicatorStyle={[
-    styles.indicator,
-    isTrayPieceDragging && styles.indicatorDisabled,
-  ]}
->
+        ref={sheetRef}
+        index={0}
+        snapPoints={snapPoints}
+        onChange={setSheetIndex}
+        enableContentPanningGesture={false}
+        enableHandlePanningGesture={!isTrayPieceDragging}
+        style={styles.sheetLayer}
+        backgroundStyle={styles.sheetBg}
+        handleIndicatorStyle={[
+          styles.indicator,
+          isTrayPieceDragging && styles.indicatorDisabled,
+        ]}
+      >
         <View style={styles.trayHeader}>
           <View>
             <Text selectable={false} style={styles.trayTitle}>
-  Parçalar ({visiblePieces.length})
-</Text>
+              Parçalar ({visiblePieces.length})
+            </Text>
 
-<Text selectable={false} style={styles.trayModeText}>
-  {isSelectionMode
-    ? 'Seçim modu açık'
-    : 'Sürükle-bırak modu'}
-</Text>
+            <Text selectable={false} style={styles.trayModeText}>
+              {isSelectionMode ? 'Seçim modu açık' : 'Sürükle-bırak modu'}
+            </Text>
           </View>
 
           <TouchableOpacity
@@ -1197,40 +1281,40 @@ const clearDragPreview = useCallback(() => {
         </View>
 
         <BottomSheetFlatList
-  data={visiblePieces}
-  keyExtractor={(item) => item.id}
-  renderItem={renderTrayPiece}
-  numColumns={TRAY_COLS}
-  scrollEnabled={isSelectionMode}
-  removeClippedSubviews={false}
-  contentContainerStyle={styles.pieceGrid}
-/>
+          data={visiblePieces}
+          keyExtractor={(item) => item.id}
+          renderItem={renderTrayPiece}
+          numColumns={TRAY_COLS}
+          scrollEnabled={isSelectionMode}
+          removeClippedSubviews={false}
+          contentContainerStyle={styles.pieceGrid}
+        />
       </BottomSheet>
 
-{dragPreview && (
-  <View pointerEvents="none" style={styles.dragPreviewLayer}>
-    <View
-      pointerEvents="none"
-      style={[
-        styles.dragPreviewPiece,
-        {
-          left: dragPreview.x,
-          top: dragPreview.y,
-          width: dragPreview.visualSize,
-          height: dragPreview.visualSize,
-        },
-      ]}
-    >
-      <PieceImage
-        piece={dragPreview.piece}
-        size={dragPreview.size}
-        strokeColor="#ffffff"
-      />
-    </View>
-  </View>
-)}
+      {dragPreview && (
+        <View pointerEvents="none" style={styles.dragPreviewLayer}>
+          <View
+            pointerEvents="none"
+            style={[
+              styles.dragPreviewPiece,
+              {
+                left: dragPreview.x,
+                top: dragPreview.y,
+                width: dragPreview.visualSize,
+                height: dragPreview.visualSize,
+              },
+            ]}
+          >
+            <PieceImage
+              piece={dragPreview.piece}
+              size={dragPreview.size}
+              strokeColor="#ffffff"
+            />
+          </View>
+        </View>
+      )}
 
-<Modal visible={presetOpen} transparent animationType="fade">
+      <Modal visible={presetOpen} transparent animationType="fade">
         <Pressable
           style={styles.modalOverlay}
           onPress={() => setPresetOpen(false)}
@@ -1306,10 +1390,11 @@ const clearDragPreview = useCallback(() => {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    paddingTop: 42,
-    backgroundColor: '#1a1a2e',
-  },
+  flex: 1,
+  paddingTop: 42,
+  backgroundColor: '#1a1a2e',
+  userSelect: 'none',
+},
 
   header: {
     flexDirection: 'row',
@@ -1332,6 +1417,13 @@ const styles = StyleSheet.create({
     color: '#e0e0e0',
     fontWeight: '700',
     fontSize: 12,
+  },
+
+  cleanHeaderBtn: {
+    width: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 0,
   },
 
   disabledBtn: {
@@ -1417,21 +1509,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  floatingCleanBtn: {
-    position: 'absolute',
-    left: 12,
-    bottom: 12,
-    backgroundColor: '#e94560',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    zIndex: 999,
-  },
-
-  floatingCleanText: {
-    color: '#fff',
-    fontWeight: '900',
-    fontSize: 12,
+  sheetLayer: {
+    zIndex: 5,
+    elevation: 5,
+    overflow: 'visible',
   },
 
   sheetBg: {
@@ -1439,39 +1520,38 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
 
-  sheetLayer: {
-  zIndex: 5,
-  elevation: 5,
-  overflow: 'visible',
-},
-
   indicator: {
     backgroundColor: '#e94560',
     width: 40,
   },
 
-  trayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  indicatorDisabled: {
+    opacity: 0.2,
   },
 
-  trayTitle: {
-  color: '#e0e0e0',
-  fontWeight: '800',
-  fontSize: 15,
+  trayHeader: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  paddingHorizontal: 16,
+  paddingVertical: 10,
   userSelect: 'none',
 },
 
+  trayTitle: {
+    color: '#e0e0e0',
+    fontWeight: '800',
+    fontSize: 15,
+    userSelect: 'none',
+  },
+
   trayModeText: {
-  color: '#ffffff88',
-  fontSize: 11,
-  marginTop: 2,
-  fontWeight: '600',
-  userSelect: 'none',
-},
+    color: '#ffffff88',
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '600',
+    userSelect: 'none',
+  },
 
   sendBtn: {
     backgroundColor: '#e94560',
@@ -1487,10 +1567,10 @@ const styles = StyleSheet.create({
   },
 
   pieceGrid: {
-  paddingHorizontal: 8,
-  paddingBottom: 80,
-  overflow: 'visible',
-},
+    paddingHorizontal: 8,
+    paddingBottom: 80,
+    overflow: 'visible',
+  },
 
   trayPiece: {
     margin: 4,
@@ -1499,10 +1579,14 @@ const styles = StyleSheet.create({
   },
 
   dragTrayPiece: {
-  zIndex: 99999,
-  elevation: 99999,
-  overflow: 'visible',
-},
+    zIndex: 99999,
+    elevation: 99999,
+    overflow: 'visible',
+  },
+
+  trayPieceDragging: {
+    opacity: 0.12,
+  },
 
   selectedTrayPiece: {
     borderWidth: 2,
@@ -1533,23 +1617,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  dragPreviewLayer: {
-  position: 'absolute',
-  left: 0,
-  right: 0,
-  top: 0,
-  bottom: 0,
-  zIndex: 999999,
-  elevation: 999999,
-},
-
-dragPreviewPiece: {
-  position: 'absolute',
-  overflow: 'visible',
-  zIndex: 999999,
-  elevation: 999999,
-},
-
   dragHintBadge: {
     position: 'absolute',
     right: 2,
@@ -1562,32 +1629,27 @@ dragPreviewPiece: {
     justifyContent: 'center',
   },
 
-  trayPieceDragging: {
-  opacity: 0.12,
-},
-
-dragPreviewLayer: {
-  position: 'absolute',
-  left: 0,
-  right: 0,
-  top: 0,
-  bottom: 0,
-  zIndex: 999999,
-  elevation: 999999,
-  pointerEvents: 'none',
-},
-
-dragPreviewPiece: {
-  position: 'absolute',
-  overflow: 'visible',
-  zIndex: 999999,
-  elevation: 999999,
-},
-
   dragHintText: {
     color: '#0f3460',
     fontSize: 13,
     fontWeight: '900',
+  },
+
+  dragPreviewLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    zIndex: 999999,
+    elevation: 999999,
+  },
+
+  dragPreviewPiece: {
+    position: 'absolute',
+    overflow: 'visible',
+    zIndex: 999999,
+    elevation: 999999,
   },
 
   selectedBadge: {
@@ -1681,10 +1743,6 @@ dragPreviewPiece: {
     marginBottom: 10,
     alignItems: 'center',
   },
-
-  indicatorDisabled: {
-  opacity: 0.2,
-},
 
   diffBtnText: {
     color: '#fff',
