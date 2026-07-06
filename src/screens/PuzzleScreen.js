@@ -8,6 +8,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -130,7 +131,10 @@ function formatDate(t) {
 
 function pieceSize(piece) {
   const cols = piece?.cols || 4;
-  return Math.min(width > 900 ? 72 : 64, (width - 56) / cols);
+  const maxSize = width > 900 ? 72 : Platform.OS === 'android' ? 48 : 54;
+  const availableWidth = width - 92;
+
+  return Math.min(maxSize, availableWidth / cols);
 }
 
 function overhang(size) {
@@ -147,10 +151,13 @@ function frameOrigin(piece, layout) {
   const size = pieceSize(piece);
   const frameWidth = size * piece.cols;
 
-  return {
-    x: Math.max(BOARD_PADDING, ((layout?.width || width) - frameWidth) / 2),
-    y: BOARD_PADDING,
-  };
+  const boardHeight = layout?.height || 600;
+const frameHeight = size * piece.rows;
+
+return {
+  x: Math.max(BOARD_PADDING, ((layout?.width || width) - frameWidth) / 2),
+  y: Math.max(BOARD_PADDING, Math.min(56, (boardHeight - frameHeight) * 0.18)),
+};
 }
 
 function solvedPosition(piece, origin) {
@@ -521,9 +528,10 @@ function createGroup(piece, index, origin, boardLayout, custom) {
   const vs = visualSize(size);
   const frameHeight = size * piece.rows;
 
-  const defaultX = origin.x + (index % 4) * (vs + 14);
-  const defaultY =
-    origin.y + frameHeight + 34 + Math.floor(index / 4) * (vs + 14);
+  const columns = width < 700 ? 3 : 4;
+const defaultX = origin.x + (index % columns) * (vs + 10);
+const defaultY =
+  origin.y + frameHeight + 28 + Math.floor(index / columns) * (vs + 10);
 
   const maxX = Math.max(
     BOARD_PADDING,
@@ -1171,15 +1179,16 @@ export default function PuzzleScreen() {
   const trayVisualSize = visualSize(trayPieceSize);
 
   const snapPoints = useMemo(() => {
-    const one = 76 + trayVisualSize + 18;
-    const two = 76 + trayVisualSize * 2 + 32;
+  const one = 72 + trayVisualSize + 8;
+  const two = 72 + trayVisualSize * 2 + 18;
+  const full = width < 700 ? height * 0.54 : height * 0.72;
 
-    return [
-      Math.min(one, height * 0.48),
-      Math.min(two, height * 0.72),
-      height * 0.84,
-    ];
-  }, [trayVisualSize]);
+  return [
+    Math.min(one, height * 0.36),
+    Math.min(two, height * 0.46),
+    full,
+  ];
+}, [trayVisualSize]);
 
   const visiblePieces = useMemo(() => {
     if (edgeOnly) return pieces.filter((p) => p.isEdge);
@@ -1819,18 +1828,27 @@ export default function PuzzleScreen() {
       const rawX = (visualBoardX - pan.x - cx * (1 - scale)) / scale;
       const rawY = (visualBoardY - pan.y - cy * (1 - scale)) / scale;
 
-      const custom = {
-        x: clamp(
-          rawX,
-          BOARD_PADDING,
-          Math.max(BOARD_PADDING, boardLayout.width - vs - BOARD_PADDING)
-        ),
-        y: clamp(
-          rawY,
-          BOARD_PADDING,
-          Math.max(BOARD_PADDING, boardLayout.height - vs - BOARD_PADDING)
-        ),
-      };
+      const fallbackX = origin.x + Math.min(piece.col, 2) * (size * 0.28);
+const fallbackY = origin.y + Math.min(piece.row, 2) * (size * 0.28);
+
+const isBadDrop =
+  rawX <= BOARD_PADDING + 4 ||
+  rawY <= BOARD_PADDING + 4 ||
+  rawX >= boardLayout.width - vs - BOARD_PADDING - 4 ||
+  rawY >= boardLayout.height - vs - BOARD_PADDING - 4;
+
+const custom = {
+  x: clamp(
+    isBadDrop ? fallbackX : rawX,
+    BOARD_PADDING,
+    Math.max(BOARD_PADDING, boardLayout.width - vs - BOARD_PADDING)
+  ),
+  y: clamp(
+    isBadDrop ? fallbackY : rawY,
+    BOARD_PADDING,
+    Math.max(BOARD_PADDING, boardLayout.height - vs - BOARD_PADDING)
+  ),
+};
 
       const newGroup = snapToFrame(createGroup(piece, 0, origin, boardLayout, custom));
 
@@ -1921,6 +1939,12 @@ export default function PuzzleScreen() {
     sheetRef.current?.snapToIndex(0);
   }, []);
 
+  const collapseTray = useCallback(() => {
+  setSelectedPieceIds([]);
+  setSheetIndex(0);
+  sheetRef.current?.snapToIndex(0);
+}, []);
+
   const renderTrayPiece = useCallback(
     ({ item }) => (
       <TrayPieceItem
@@ -1952,6 +1976,7 @@ export default function PuzzleScreen() {
   );
 
   return (
+  <SafeAreaView style={styles.safeRoot}>
     <View ref={containerRef} style={styles.container} onLayout={measureContainer}>
       {screenMode === 'home' ? (
         <ScrollView
@@ -2242,19 +2267,19 @@ export default function PuzzleScreen() {
                 </TouchableOpacity>
 
                 <Text style={styles.boardGestureHint}>
-                  2 parmakla yakınlaştır / taşı
-                </Text>
+  2 parmakla taşı
+</Text>
               </View>
             )}
           </View>
 
           <BottomSheet
-            ref={sheetRef}
-            index={0}
-            snapPoints={snapPoints}
-            onChange={setSheetIndex}
-            enableContentPanningGesture={false}
-            enableHandlePanningGesture={!isTrayPieceDragging}
+  ref={sheetRef}
+  index={0}
+  snapPoints={snapPoints}
+  onChange={setSheetIndex}
+  enableContentPanningGesture={!isTrayPieceDragging}
+  enableHandlePanningGesture={!isTrayPieceDragging}
             style={styles.sheetLayer}
             backgroundStyle={styles.sheetBg}
             handleIndicatorStyle={[
@@ -2274,23 +2299,29 @@ export default function PuzzleScreen() {
               </View>
 
               <View style={styles.trayActionRow}>
-                {isSelectionMode && (
-                  <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
-                    <Text style={styles.modeBtnText}>Sürükle</Text>
-                  </TouchableOpacity>
-                )}
+  {sheetIndex > 0 && (
+    <TouchableOpacity style={styles.modeBtn} onPress={collapseTray}>
+      <Text style={styles.modeBtnText}>Aşağı</Text>
+    </TouchableOpacity>
+  )}
 
-                <TouchableOpacity
-                  style={[
-                    styles.sendBtn,
-                    visiblePieces.length === 0 && styles.disabledBtn,
-                  ]}
-                  disabled={visiblePieces.length === 0}
-                  onPress={sendPiecesToBoard}
-                >
-                  <Text style={styles.sendBtnText}>{sendButtonLabel}</Text>
-                </TouchableOpacity>
-              </View>
+  {isSelectionMode && (
+    <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
+      <Text style={styles.modeBtnText}>Sürükle</Text>
+    </TouchableOpacity>
+  )}
+
+  <TouchableOpacity
+    style={[
+      styles.sendBtn,
+      visiblePieces.length === 0 && styles.disabledBtn,
+    ]}
+    disabled={visiblePieces.length === 0}
+    onPress={sendPiecesToBoard}
+  >
+    <Text style={styles.sendBtnText}>{sendButtonLabel}</Text>
+  </TouchableOpacity>
+</View>
             </View>
 
             <BottomSheetFlatList
@@ -2384,17 +2415,23 @@ export default function PuzzleScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </View>
-  );
+        </View>
+  </SafeAreaView>
+);
 }
 
 const styles = StyleSheet.create({
+
+  safeRoot: {
+  flex: 1,
+  backgroundColor: THEME.top,
+},
+
   container: {
-    flex: 1,
-    paddingTop: 0,
-    backgroundColor: THEME.bg,
-    userSelect: 'none',
-  },
+  flex: 1,
+  backgroundColor: THEME.bg,
+  userSelect: 'none',
+},
 
   homeScroll: {
     flex: 1,
@@ -2402,15 +2439,16 @@ const styles = StyleSheet.create({
   },
 
   homeContent: {
-    paddingHorizontal: 18,
-    paddingBottom: 36,
-  },
+  paddingHorizontal: 18,
+  paddingTop: 14,
+  paddingBottom: 36,
+},
 
   homeHero: {
-    backgroundColor: THEME.white,
-    borderRadius: 22,
-    padding: 20,
-    marginTop: 12,
+  backgroundColor: THEME.white,
+  borderRadius: 22,
+  padding: 20,
+  marginTop: 0,
     marginBottom: 22,
     borderWidth: 1,
     borderColor: '#e8e8e8',
@@ -2620,9 +2658,8 @@ const styles = StyleSheet.create({
   },
 
   gameTopBar: {
-  height: 84,
-  paddingTop: Platform.OS === 'ios' ? 14 : 10,
-  paddingHorizontal: 18,
+  height: 58,
+  paddingHorizontal: 14,
   backgroundColor: THEME.top,
   borderBottomWidth: 1,
   borderBottomColor: THEME.topLine,
@@ -2642,7 +2679,7 @@ topBarSideLeft: {
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'flex-start',
-  gap: width > 700 ? 120 : 22,
+  gap: width > 700 ? 120 : 18,
 },
 
 topBarSideRight: {
@@ -2650,27 +2687,27 @@ topBarSideRight: {
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'flex-end',
-  gap: width > 700 ? 120 : 22,
+  gap: width > 700 ? 120 : 18,
 },
 
 topScoreAbsolute: {
   position: 'absolute',
   left: 0,
   right: 0,
-  top: Platform.OS === 'ios' ? 14 : 10,
-  height: 42,
+  top: 0,
+  bottom: 0,
   alignItems: 'center',
   justifyContent: 'center',
 },
 
   topIconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
+  width: 38,
+  height: 38,
+  borderRadius: 19,
+  alignItems: 'center',
+  justifyContent: 'center',
+  backgroundColor: 'transparent',
+},
 
   topIconButtonActive: {
     backgroundColor: '#f0e9ff',
@@ -2715,16 +2752,16 @@ topScoreAbsolute: {
   },
 
   board: {
-    flex: 1,
-    marginHorizontal: 16,
-    marginTop: 14,
-    marginBottom: 12,
-    borderRadius: 0,
-    backgroundColor: THEME.board,
-    borderWidth: 1,
-    borderColor: THEME.boardLine,
-    overflow: 'hidden',
-  },
+  flex: 1,
+  marginHorizontal: 10,
+  marginTop: 10,
+  marginBottom: 6,
+  borderRadius: 0,
+  backgroundColor: THEME.board,
+  borderWidth: 1,
+  borderColor: THEME.boardLine,
+  overflow: 'hidden',
+},
 
   boardCanvas: {
     position: 'absolute',
@@ -2787,14 +2824,14 @@ topScoreAbsolute: {
   },
 
   boardMiniButtonText: {
-    color: '#333',
-    fontSize: 11,
-    fontWeight: '900',
-  },
+  color: '#333',
+  fontSize: 10,
+  fontWeight: '900',
+},
 
   boardGestureHint: {
-    color: '#555',
-    fontSize: 10,
+  color: '#555',
+  fontSize: 10,
     fontWeight: '800',
     backgroundColor: '#ffffffcc',
     paddingHorizontal: 9,
@@ -2892,12 +2929,12 @@ topScoreAbsolute: {
   },
 
   pieceGrid: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 118,
-    overflow: 'visible',
-    backgroundColor: THEME.white,
-  },
+  paddingHorizontal: 18,
+  paddingTop: 14,
+  paddingBottom: Platform.OS === 'android' ? 150 : 118,
+  overflow: 'visible',
+  backgroundColor: THEME.white,
+},
 
   trayPiece: {
     margin: 6,
