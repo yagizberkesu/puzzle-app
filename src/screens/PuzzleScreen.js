@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -8,6 +8,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -18,8 +19,11 @@ import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import * as ImagePicker from 'expo-image-picker';
 import Svg, { Defs, ClipPath, Path, Image as SvgImage } from 'react-native-svg';
 import * as ImageManipulator from 'expo-image-manipulator';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width, height } = Dimensions.get('window');
+
+const STORAGE_KEY = 'PUZZLE_APP_SAVED_PUZZLES_V1';
 
 const SELECT_MODE_INDEX = 2;
 const TRAY_HEADER_SPACE = 76;
@@ -51,6 +55,65 @@ const PRESETS = [
     uri: 'https://images.unsplash.com/photo-1541344999736-83eca272f6fc?w=900',
   },
 ];
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getTouchDistance(touches) {
+  if (!touches || touches.length < 2) return 0;
+
+  const [first, second] = touches;
+
+  return Math.hypot(
+    second.pageX - first.pageX,
+    second.pageY - first.pageY
+  );
+}
+
+function getTouchCenter(touches) {
+  if (!touches || touches.length < 2) {
+    return { x: 0, y: 0 };
+  }
+
+  const [first, second] = touches;
+
+  return {
+    x: (first.pageX + second.pageX) / 2,
+    y: (first.pageY + second.pageY) / 2,
+  };
+}
+
+function getGroupPieceCount(groups) {
+  return groups.reduce((total, group) => total + group.pieces.length, 0);
+}
+
+function getSolvedPieceCount(groups) {
+  return groups
+    .filter((group) => group.anchoredToFrame)
+    .reduce((total, group) => total + group.pieces.length, 0);
+}
+
+function getPuzzleProgress(record) {
+  const totalPieces = record?.totalPieces || 0;
+  if (!totalPieces) return 0;
+
+  const solvedCount =
+    typeof record.solvedCount === 'number'
+      ? record.solvedCount
+      : getSolvedPieceCount(record.boardGroups || []);
+
+  return Math.min(100, Math.round((solvedCount / totalPieces) * 100));
+}
+
+function formatDate(timestamp) {
+  if (!timestamp) return '';
+
+  return new Date(timestamp).toLocaleDateString('tr-TR', {
+    day: '2-digit',
+    month: 'short',
+  });
+}
 
 function getBoardPieceSize(piece) {
   const cols = piece?.cols || 4;
@@ -493,6 +556,7 @@ function mergeGroups(draggedGroup, otherGroup, targetDraggedX, targetDraggedY) {
 const DraggableGroup = React.memo(function DraggableGroup({
   group,
   onMoveEnd,
+  getBoardScale,
 }) {
   const pan = useRef(
     new Animated.ValueXY({
@@ -520,26 +584,25 @@ const DraggableGroup = React.memo(function DraggableGroup({
         onPanResponderGrant: () => {
           if (group.anchoredToFrame) return;
 
-          pan.setOffset({
-            x: pan.x._value,
-            y: pan.y._value,
-          });
-
           pan.setValue({
-            x: 0,
-            y: 0,
+            x: group.x,
+            y: group.y,
           });
         },
 
-        onPanResponderMove: Animated.event(
-          [null, { dx: pan.x, dy: pan.y }],
-          { useNativeDriver: false }
-        ),
+        onPanResponderMove: (_event, gesture) => {
+          if (group.anchoredToFrame) return;
+
+          const scale = Math.max(0.35, getBoardScale?.() || 1);
+
+          pan.setValue({
+            x: group.x + gesture.dx / scale,
+            y: group.y + gesture.dy / scale,
+          });
+        },
 
         onPanResponderRelease: () => {
           if (group.anchoredToFrame) return;
-
-          pan.flattenOffset();
 
           const finalPosition = {
             x: pan.x._value,
@@ -557,10 +620,21 @@ const DraggableGroup = React.memo(function DraggableGroup({
         },
 
         onPanResponderTerminate: () => {
-          pan.flattenOffset();
+          pan.setValue({
+            x: group.x,
+            y: group.y,
+          });
         },
       }),
-    [group.id, group.anchoredToFrame, onMoveEnd, pan]
+    [
+      group.id,
+      group.x,
+      group.y,
+      group.anchoredToFrame,
+      getBoardScale,
+      onMoveEnd,
+      pan,
+    ]
   );
 
   return (
@@ -732,14 +806,158 @@ const TrayPieceItem = React.memo(function TrayPieceItem({
   );
 });
 
+const FloatingReference = React.memo(function FloatingReference({
+  uri,
+  onClose,
+}) {
+  const refPan = useRef(
+    new Animated.ValueXY({
+      x: width * 0.16,
+      y: 110,
+    })
+  ).current;
+
+  const refScale = useRef(new Animated.Value(1)).current;
+
+  const refGesture = useRef({
+    startX: width * 0.16,
+    startY: 110,
+    startScale: 1,
+    lastX: width * 0.16,
+    lastY: 110,
+    lastScale: 1,
+    startDistance: 0,
+  }).current;
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+
+        onPanResponderGrant: (event) => {
+          const touches = event.nativeEvent.touches || [];
+
+          refGesture.startX = refGesture.lastX;
+          refGesture.startY = refGesture.lastY;
+          refGesture.startScale = refGesture.lastScale;
+
+          if (touches.length >= 2) {
+            refGesture.startDistance = getTouchDistance(touches);
+          }
+        },
+
+        onPanResponderMove: (event, gesture) => {
+          const touches = event.nativeEvent.touches || [];
+
+          if (touches.length >= 2) {
+            const distance = getTouchDistance(touches);
+            const ratio =
+              refGesture.startDistance > 0
+                ? distance / refGesture.startDistance
+                : 1;
+
+            const nextScale = clamp(refGesture.startScale * ratio, 0.55, 2.4);
+
+            refGesture.lastScale = nextScale;
+            refScale.setValue(nextScale);
+            return;
+          }
+
+          const nextX = refGesture.startX + gesture.dx;
+          const nextY = refGesture.startY + gesture.dy;
+
+          refGesture.lastX = nextX;
+          refGesture.lastY = nextY;
+
+          refPan.setValue({
+            x: nextX,
+            y: nextY,
+          });
+        },
+
+        onPanResponderRelease: () => {
+          refGesture.startX = refGesture.lastX;
+          refGesture.startY = refGesture.lastY;
+          refGesture.startScale = refGesture.lastScale;
+        },
+
+        onPanResponderTerminate: () => {
+          refGesture.startX = refGesture.lastX;
+          refGesture.startY = refGesture.lastY;
+          refGesture.startScale = refGesture.lastScale;
+        },
+      }),
+    [refGesture, refPan, refScale]
+  );
+
+  return (
+    <Animated.View
+      {...panResponder.panHandlers}
+      style={[
+        styles.floatingReference,
+        {
+          transform: [
+            ...refPan.getTranslateTransform(),
+            {
+              scale: refScale,
+            },
+          ],
+        },
+      ]}
+    >
+      <Image
+        source={{ uri }}
+        style={styles.floatingReferenceImage}
+        resizeMode="cover"
+      />
+
+      <TouchableOpacity
+        activeOpacity={0.85}
+        style={styles.floatingReferenceClose}
+        onPress={onClose}
+      >
+        <Text style={styles.floatingReferenceCloseText}>×</Text>
+      </TouchableOpacity>
+
+      <View pointerEvents="none" style={styles.floatingReferenceHint}>
+        <Text style={styles.floatingReferenceHintText}>Sürükle / pinch</Text>
+      </View>
+    </Animated.View>
+  );
+});
+
 export default function PuzzleScreen() {
   const sheetRef = useRef(null);
   const boardRef = useRef(null);
   const containerRef = useRef(null);
 
-  const screenOffsetRef = useRef({ x: 0, y: 0 });
-  const dragPreviewRef = useRef(null);
-  const dragPreviewPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+const screenOffsetRef = useRef({ x: 0, y: 0 });
+const dragPreviewRef = useRef(null);
+const saveTimerRef = useRef(null);
+
+const boardScaleRef = useRef(1);
+const boardPanRef = useRef({ x: 0, y: 0 });
+const boardGestureRef = useRef({
+  startScale: 1,
+  startPanX: 0,
+  startPanY: 0,
+  startDistance: 0,
+  startCenterX: 0,
+  startCenterY: 0,
+});
+
+const dragPreviewPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+const boardPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+const boardScale = useRef(new Animated.Value(1)).current;
+
+  const [screenMode, setScreenMode] = useState('home');
+  const [savedPuzzles, setSavedPuzzles] = useState([]);
+  const [homeLoading, setHomeLoading] = useState(true);
+  const [activePuzzleId, setActivePuzzleId] = useState(null);
+  const [pendingPuzzleId, setPendingPuzzleId] = useState(null);
+  const [pendingPuzzleTitle, setPendingPuzzleTitle] = useState('Yeni Puzzle');
 
   const [sourceImage, setSourceImage] = useState(null);
   const [pieces, setPieces] = useState([]);
@@ -833,10 +1051,114 @@ export default function PuzzleScreen() {
       ? `Seçilenleri Gönder (${selectedCount})`
       : `${sendCountLabel} Parça Gönder`;
 
-  
-
+  const currentTotalPieces = pieces.length + getGroupPieceCount(boardGroups);
   const referenceWidth = activePiece ? activePieceSize * activePiece.cols : 0;
   const referenceHeight = activePiece ? activePieceSize * activePiece.rows : 0;
+
+  const sortedSavedPuzzles = useMemo(
+    () => [...savedPuzzles].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
+    [savedPuzzles]
+  );
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadSavedPuzzles = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+
+        if (mounted && Array.isArray(parsed)) {
+          setSavedPuzzles(parsed);
+        }
+      } catch (error) {
+        console.log('Puzzle storage load error:', error);
+      } finally {
+        if (mounted) {
+          setHomeLoading(false);
+        }
+      }
+    };
+
+    loadSavedPuzzles();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const persistPuzzles = useCallback((nextPuzzles) => {
+    setSavedPuzzles(nextPuzzles);
+
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextPuzzles)).catch(
+      (error) => {
+        console.log('Puzzle storage save error:', error);
+      }
+    );
+  }, []);
+
+  const updatePuzzleRecord = useCallback((puzzleId, updater) => {
+    setSavedPuzzles((prev) => {
+      const next = prev.map((record) =>
+        record.id === puzzleId ? updater(record) : record
+      );
+
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((error) => {
+        console.log('Puzzle storage save error:', error);
+      });
+
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (
+      screenMode !== 'puzzle' ||
+      !activePuzzleId ||
+      !sourceImage ||
+      currentTotalPieces === 0
+    ) {
+      return;
+    }
+
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
+    saveTimerRef.current = setTimeout(() => {
+      const solvedCount = getSolvedPieceCount(boardGroups);
+      const progress = Math.min(
+        100,
+        Math.round((solvedCount / currentTotalPieces) * 100)
+      );
+
+      updatePuzzleRecord(activePuzzleId, (record) => ({
+        ...record,
+        imageUri: sourceImage,
+        totalPieces: currentTotalPieces,
+        pieces,
+        boardGroups,
+        solvedCount,
+        progress,
+        completed: progress >= 100,
+        updatedAt: Date.now(),
+      }));
+    }, 450);
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, [
+    activePuzzleId,
+    boardGroups,
+    currentTotalPieces,
+    pieces,
+    screenMode,
+    sourceImage,
+    updatePuzzleRecord,
+  ]);
 
   const measureContainer = useCallback(() => {
     requestAnimationFrame(() => {
@@ -864,6 +1186,76 @@ export default function PuzzleScreen() {
     });
   }, []);
 
+  const getBoardScale = useCallback(() => boardScaleRef.current, []);
+
+const resetBoardCamera = useCallback(() => {
+  boardScaleRef.current = 1;
+  boardPanRef.current = { x: 0, y: 0 };
+
+  boardScale.setValue(1);
+  boardPan.setValue({ x: 0, y: 0 });
+}, [boardPan, boardScale]);
+
+const boardPanResponder = useMemo(
+  () =>
+    PanResponder.create({
+      onStartShouldSetPanResponder: (event) =>
+        (event.nativeEvent.touches || []).length >= 2,
+      onMoveShouldSetPanResponder: (event) =>
+        (event.nativeEvent.touches || []).length >= 2,
+      onStartShouldSetPanResponderCapture: (event) =>
+        (event.nativeEvent.touches || []).length >= 2,
+      onMoveShouldSetPanResponderCapture: (event) =>
+        (event.nativeEvent.touches || []).length >= 2,
+      onPanResponderTerminationRequest: () => false,
+
+      onPanResponderGrant: (event) => {
+        const touches = event.nativeEvent.touches || [];
+        const center = getTouchCenter(touches);
+
+        boardGestureRef.current = {
+          startScale: boardScaleRef.current,
+          startPanX: boardPanRef.current.x,
+          startPanY: boardPanRef.current.y,
+          startDistance: getTouchDistance(touches),
+          startCenterX: center.x,
+          startCenterY: center.y,
+        };
+      },
+
+      onPanResponderMove: (event) => {
+        const touches = event.nativeEvent.touches || [];
+        if (touches.length < 2) return;
+
+        const distance = getTouchDistance(touches);
+        const center = getTouchCenter(touches);
+        const gesture = boardGestureRef.current;
+
+        const ratio =
+          gesture.startDistance > 0
+            ? distance / gesture.startDistance
+            : 1;
+
+        const nextScale = clamp(gesture.startScale * ratio, 0.65, 3.2);
+        const nextPanX = gesture.startPanX + (center.x - gesture.startCenterX);
+        const nextPanY = gesture.startPanY + (center.y - gesture.startCenterY);
+
+        boardScaleRef.current = nextScale;
+        boardPanRef.current = {
+          x: nextPanX,
+          y: nextPanY,
+        };
+
+        boardScale.setValue(nextScale);
+        boardPan.setValue({
+          x: nextPanX,
+          y: nextPanY,
+        });
+      },
+    }),
+  [boardPan, boardScale]
+);
+
   const normalizeAssetUri = useCallback((uri) => {
     if (Platform.OS === 'android' && uri && !uri.includes('://')) {
       return `file://${uri}`;
@@ -872,102 +1264,240 @@ export default function PuzzleScreen() {
     return uri;
   }, []);
 
-  const verifyImageLoads = useCallback(
-    (uri) =>
-      new Promise((resolve) => {
-        Image.getSize(
-          uri,
-          () => resolve(true),
-          () => resolve(false)
-        );
-      }),
-    []
-  );
-
-  const applyImage = useCallback((uri) => {
-    setPendingUri(uri);
+  const queuePuzzleDifficulty = useCallback((record) => {
+    setPendingUri(record.imageUri);
+    setPendingPuzzleId(record.id);
+    setPendingPuzzleTitle(record.title || 'Yeni Puzzle');
     setPresetOpen(false);
     setDifficultyOpen(true);
   }, []);
+
+  const createPuzzleCardFromImage = useCallback(
+    (uri, title = 'Yeni Puzzle') => {
+      const now = Date.now();
+      const record = {
+        id: `puzzle-${now}`,
+        title,
+        imageUri: uri,
+        createdAt: now,
+        updatedAt: now,
+        totalPieces: null,
+        pieces: [],
+        boardGroups: [],
+        solvedCount: 0,
+        progress: 0,
+        completed: false,
+      };
+
+      const next = [record, ...savedPuzzles];
+      persistPuzzles(next);
+      queuePuzzleDifficulty(record);
+    },
+    [persistPuzzles, queuePuzzleDifficulty, savedPuzzles]
+  );
+
+  const applyImage = useCallback(
+    (uri, title = 'Yeni Puzzle') => {
+      createPuzzleCardFromImage(uri, title);
+    },
+    [createPuzzleCardFromImage]
+  );
+
+  const openSavedPuzzle = useCallback(
+    (record) => {
+      if (!record.totalPieces) {
+        queuePuzzleDifficulty(record);
+        return;
+      }
+
+      const restoredPieces =
+        Array.isArray(record.pieces) && record.pieces.length > 0
+          ? record.pieces
+          : createPieces(record.imageUri, record.totalPieces);
+
+      setActivePuzzleId(record.id);
+      setSourceImage(record.imageUri);
+      setPieces(restoredPieces);
+      setBoardGroups(Array.isArray(record.boardGroups) ? record.boardGroups : []);
+      setSelectedPieceIds([]);
+      setEdgeOnly(false);
+      setHintOn(false);
+      setSheetIndex(0);
+      setDragPreview(null);
+      setIsTrayPieceDragging(false);
+      setScreenMode('puzzle');
+
+      dragPreviewRef.current = null;
+      dragPreviewPan.setValue({ x: 0, y: 0 });
+      resetBoardCamera();
+
+      requestAnimationFrame(() => {
+        sheetRef.current?.snapToIndex(0);
+      });
+    },
+    [dragPreviewPan, queuePuzzleDifficulty, resetBoardCamera]
+  );
+
+  const deletePuzzle = useCallback(
+    (recordId) => {
+      Alert.alert('Puzzle silinsin mi?', 'Bu kayıt ana sayfadan kaldırılacak.', [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: () => {
+            const next = savedPuzzles.filter((record) => record.id !== recordId);
+            persistPuzzles(next);
+
+            if (activePuzzleId === recordId) {
+              setActivePuzzleId(null);
+              setScreenMode('home');
+            }
+          },
+        },
+      ]);
+    },
+    [activePuzzleId, persistPuzzles, savedPuzzles]
+  );
+
+  const goHome = useCallback(() => {
+  setScreenMode('home');
+  setReferenceOpen(false);
+  setHintOn(false);
+  setIsTrayPieceDragging(false);
+  setDragPreview(null);
+  dragPreviewRef.current = null;
+  resetBoardCamera();
+}, [resetBoardCamera]);
 
   const selectDifficulty = useCallback(
     (totalPieces) => {
       if (!pendingUri) return;
 
       const nextPieces = createPieces(pendingUri, totalPieces);
+      const now = Date.now();
+      let targetId = pendingPuzzleId;
 
+      if (!targetId) {
+        targetId = `puzzle-${now}`;
+        const record = {
+          id: targetId,
+          title: pendingPuzzleTitle || 'Yeni Puzzle',
+          imageUri: pendingUri,
+          createdAt: now,
+          updatedAt: now,
+          totalPieces,
+          pieces: nextPieces,
+          boardGroups: [],
+          solvedCount: 0,
+          progress: 0,
+          completed: false,
+        };
+
+        persistPuzzles([record, ...savedPuzzles]);
+      } else {
+        updatePuzzleRecord(targetId, (record) => ({
+          ...record,
+          title: record.title || pendingPuzzleTitle || 'Yeni Puzzle',
+          imageUri: pendingUri,
+          totalPieces,
+          pieces: nextPieces,
+          boardGroups: [],
+          solvedCount: 0,
+          progress: 0,
+          completed: false,
+          updatedAt: now,
+        }));
+      }
+
+      setActivePuzzleId(targetId);
       setSourceImage(pendingUri);
       setPieces(nextPieces);
       setBoardGroups([]);
       setSelectedPieceIds([]);
       setDifficultyOpen(false);
+      setPendingUri(null);
+      setPendingPuzzleId(null);
       setEdgeOnly(false);
       setHintOn(false);
       setSheetIndex(0);
       setDragPreview(null);
       setIsTrayPieceDragging(false);
+      setScreenMode('puzzle');
 
       dragPreviewRef.current = null;
       dragPreviewPan.setValue({ x: 0, y: 0 });
-      sheetRef.current?.snapToIndex(0);
+      resetBoardCamera();
+
+      requestAnimationFrame(() => {
+        sheetRef.current?.snapToIndex(0);
+      });
     },
-    [pendingUri, dragPreviewPan]
+    [
+  dragPreviewPan,
+  pendingPuzzleId,
+  pendingPuzzleTitle,
+  pendingUri,
+  persistPuzzles,
+  savedPuzzles,
+  resetBoardCamera,
+  updatePuzzleRecord,
+]
   );
 
   const pickFromGallery = useCallback(async () => {
-  try {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
-    if (!permission.granted) {
-      Alert.alert(
-        'İzin gerekli',
-        'Galeriden görsel seçebilmek için fotoğraf erişim izni vermelisin.'
-      );
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.9,
-      base64: false,
-      exif: false,
-      legacy: Platform.OS === 'android',
-    });
-
-    if (result.canceled || !result.assets?.[0]?.uri) {
-      return;
-    }
-
-    const pickedUri = normalizeAssetUri(result.assets[0].uri);
-
-    const squareImage = await ImageManipulator.manipulateAsync(
-      pickedUri,
-      [
-        {
-          resize: {
-            width: 1024,
-            height: 1024,
-          },
-        },
-      ],
-      {
-        compress: 0.9,
-        format: ImageManipulator.SaveFormat.JPEG,
+      if (!permission.granted) {
+        Alert.alert(
+          'İzin gerekli',
+          'Galeriden görsel seçebilmek için fotoğraf erişim izni vermelisin.'
+        );
+        return;
       }
-    );
 
-    applyImage(squareImage.uri);
-  } catch (error) {
-    console.log('Gallery pick error:', error);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.9,
+        base64: false,
+        exif: false,
+        legacy: Platform.OS === 'android',
+      });
 
-    Alert.alert(
-      'Görsel seçilemedi',
-      'Telefonda galeri açıldı ama görsel işlenemedi. Farklı bir görsel dene veya uygulama izinlerini kontrol et.'
-    );
-  }
-}, [applyImage, normalizeAssetUri]);
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+
+      const pickedUri = normalizeAssetUri(result.assets[0].uri);
+
+      const squareImage = await ImageManipulator.manipulateAsync(
+        pickedUri,
+        [
+          {
+            resize: {
+              width: 1024,
+            },
+          },
+        ],
+        {
+          compress: 0.9,
+          format: ImageManipulator.SaveFormat.JPEG,
+        }
+      );
+
+      createPuzzleCardFromImage(squareImage.uri, 'Galeriden Puzzle');
+    } catch (error) {
+      console.log('Gallery pick error:', error);
+
+      Alert.alert(
+        'Görsel seçilemedi',
+        'Telefonda galeri açıldı ama görsel işlenemedi. Farklı bir görsel dene veya uygulama izinlerini kontrol et.'
+      );
+    }
+  }, [createPuzzleCardFromImage, normalizeAssetUri]);
 
   const maybeSnapGroupToFrame = useCallback(
     (group) => {
@@ -1087,8 +1617,21 @@ export default function PuzzleScreen() {
         return;
       }
 
-      const rawBoardX = finalPreview.x - boardWindowLayout.x;
-      const rawBoardY = finalPreview.y - boardWindowLayout.y;
+const visualBoardX = finalPreview.x - boardWindowLayout.x;
+const visualBoardY = finalPreview.y - boardWindowLayout.y;
+
+const currentScale = Math.max(0.35, boardScaleRef.current || 1);
+const currentPan = boardPanRef.current || { x: 0, y: 0 };
+const boardCenterX = boardLayout.width / 2;
+const boardCenterY = boardLayout.height / 2;
+
+const rawBoardX =
+  (visualBoardX - currentPan.x - boardCenterX * (1 - currentScale)) /
+  currentScale;
+
+const rawBoardY =
+  (visualBoardY - currentPan.y - boardCenterY * (1 - currentScale)) /
+  currentScale;
 
       const maxX = Math.max(
         BOARD_PADDING,
@@ -1268,194 +1811,354 @@ export default function PuzzleScreen() {
       style={styles.container}
       onLayout={measureContainer}
     >
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerBtn}
-          onPress={() => setPresetOpen(true)}
+      {screenMode === 'home' ? (
+        <ScrollView
+          style={styles.homeScroll}
+          contentContainerStyle={styles.homeContent}
+          showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.headerBtnText}>🖼️ Galeri</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.headerBtn, !sourceImage && styles.disabledBtn]}
-          disabled={!sourceImage}
-          onPress={() => setReferenceOpen(true)}
-        >
-          <Text style={styles.headerBtnText}>👁️ Referans</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.headerBtn,
-            hintOn && styles.headerBtnActive,
-            !sourceImage && styles.disabledBtn,
-          ]}
-          disabled={!sourceImage}
-          onPress={() => setHintOn((prev) => !prev)}
-        >
-          <Text style={styles.headerBtnText}>
-            {hintOn ? '💡 İpucu Kapat' : '💡 İpucu'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.headerBtn, !sourceImage && styles.disabledBtn]}
-          disabled={!sourceImage}
-          onPress={() => setEdgeOnly((prev) => !prev)}
-        >
-          <Text style={styles.headerBtnText}>
-            {edgeOnly ? 'Tüm Parçalar' : 'Kenarlar'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.headerBtn,
-            styles.cleanHeaderBtn,
-            looseSingleGroups.length === 0 && styles.disabledBtn,
-          ]}
-          disabled={looseSingleGroups.length === 0}
-          onPress={clearLooseSinglePieces}
-        >
-          <Text style={styles.headerBtnText}>🧹</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View
-        ref={boardRef}
-        style={styles.board}
-        onLayout={(event) => {
-          setBoardLayout(event.nativeEvent.layout);
-          measureBoard();
-        }}
-      >
-        {!sourceImage && (
-          <Text style={styles.boardLabel}>Başlamak için görsel seç</Text>
-        )}
-
-        {sourceImage && activePiece && (
-          <View
-            pointerEvents="none"
-            style={[
-              styles.frameArea,
-              {
-                left: frameOrigin.x,
-                top: frameOrigin.y,
-                width: referenceWidth,
-                height: referenceHeight,
-              },
-            ]}
-          />
-        )}
-
-        {sourceImage && activePiece && hintOn && (
-          <Image
-            pointerEvents="none"
-            source={{ uri: sourceImage }}
-            style={[
-              styles.boardReferenceImage,
-              {
-                left: frameOrigin.x,
-                top: frameOrigin.y,
-                width: referenceWidth,
-                height: referenceHeight,
-              },
-            ]}
-            resizeMode="cover"
-          />
-        )}
-
-        {sourceImage && boardGroups.length === 0 && (
-          <Text style={styles.boardLabel}>Alt tepsiden parça gönder</Text>
-        )}
-
-        
-
-        {orderedBoardGroups.map((group) => (
-          <DraggableGroup
-            key={group.id}
-            group={group}
-            onMoveEnd={onGroupMoveEnd}
-          />
-        ))}
-      </View>
-
-      <BottomSheet
-        ref={sheetRef}
-        index={0}
-        snapPoints={snapPoints}
-        onChange={setSheetIndex}
-        enableContentPanningGesture={false}
-        enableHandlePanningGesture={!isTrayPieceDragging}
-        style={styles.sheetLayer}
-        backgroundStyle={styles.sheetBg}
-        handleIndicatorStyle={[
-          styles.indicator,
-          isTrayPieceDragging && styles.indicatorDisabled,
-        ]}
-      >
-        <View style={styles.trayHeader}>
-          <View>
-            <Text selectable={false} style={styles.trayTitle}>
-              Parçalar ({visiblePieces.length})
+          <View style={styles.homeHero}>
+            <Text style={styles.homeEyebrow}>PUZZLE STUDIO</Text>
+            <Text style={styles.homeTitle}>Puzzle'larım</Text>
+            <Text style={styles.homeSubtitle}>
+              Galeriden görsel ekle, parça sayısını seç ve kaldığın yerden devam et.
             </Text>
 
-            <Text selectable={false} style={styles.trayModeText}>
-              {isSelectionMode ? 'Seçim modu açık' : 'Sürükle-bırak modu'}
-            </Text>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.homePrimaryButton}
+              onPress={pickFromGallery}
+            >
+              <Text style={styles.homePrimaryButtonText}>
+                + Galeriden Yeni Puzzle
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.trayActionRow}>
-            {isSelectionMode && (
-              <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
-                <Text style={styles.modeBtnText}>Sürükle</Text>
+          <Text style={styles.sectionTitle}>Hazır görseller</Text>
+
+          <View style={styles.homePresetRow}>
+            {PRESETS.map((preset) => (
+              <TouchableOpacity
+                key={preset.id}
+                activeOpacity={0.9}
+                style={styles.homePresetCard}
+                onPress={() => applyImage(preset.uri, preset.label)}
+              >
+                <Image source={{ uri: preset.uri }} style={styles.homePresetImage} />
+                <Text style={styles.homePresetLabel}>{preset.label}</Text>
               </TouchableOpacity>
-            )}
+            ))}
+          </View>
+
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Kayıtlı puzzle'lar</Text>
+            <Text style={styles.sectionCount}>{sortedSavedPuzzles.length}</Text>
+          </View>
+
+          {homeLoading && (
+            <Text style={styles.emptyText}>Kayıtlar yükleniyor...</Text>
+          )}
+
+          {!homeLoading && sortedSavedPuzzles.length === 0 && (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>Henüz kayıt yok</Text>
+              <Text style={styles.emptyText}>
+                Bir görsel ekleyince burada kart olarak duracak.
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.puzzleCardGrid}>
+            {sortedSavedPuzzles.map((record) => {
+              const progress = getPuzzleProgress(record);
+              const totalLabel = record.totalPieces
+                ? `${record.totalPieces} parça`
+                : 'Parça seçilmedi';
+
+              return (
+                <TouchableOpacity
+                  key={record.id}
+                  activeOpacity={0.92}
+                  style={styles.puzzleCard}
+                  onPress={() => openSavedPuzzle(record)}
+                >
+                  <Image
+                    source={{ uri: record.imageUri }}
+                    style={styles.puzzleCardImage}
+                    resizeMode="cover"
+                  />
+
+                  <View style={styles.progressBubble}>
+                    <Text style={styles.progressBubbleText}>%{progress}</Text>
+                  </View>
+
+                  <View style={styles.puzzleCardBody}>
+                    <Text style={styles.puzzleCardTitle} numberOfLines={1}>
+                      {record.title || 'Puzzle'}
+                    </Text>
+
+                    <Text style={styles.puzzleCardMeta}>
+                      {totalLabel} · {formatDate(record.updatedAt)}
+                    </Text>
+
+                    <View style={styles.cardProgressTrack}>
+                      <View
+                        style={[
+                          styles.cardProgressFill,
+                          {
+                            width: `${progress}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+
+                    <View style={styles.cardActionRow}>
+                      <Text style={styles.cardActionText}>
+                        {record.totalPieces ? 'Devam et' : 'Başlat'}
+                      </Text>
+
+                      <TouchableOpacity
+                        hitSlop={10}
+                        onPress={() => deletePuzzle(record.id)}
+                      >
+                        <Text style={styles.cardDeleteText}>Sil</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </ScrollView>
+      ) : (
+        <>
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.headerBtn} onPress={goHome}>
+              <Text style={styles.headerBtnText}>← Ana Sayfa</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.headerBtn, !sourceImage && styles.disabledBtn]}
+              disabled={!sourceImage}
+onPress={() => setReferenceOpen((prev) => !prev)}            >
+              <Text style={styles.headerBtnText}>
+  {referenceOpen ? '✕ Referans' : '👁️ Referans'}
+</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={[
-                styles.sendBtn,
-                visiblePieces.length === 0 && styles.disabledBtn,
+                styles.headerBtn,
+                hintOn && styles.headerBtnActive,
+                !sourceImage && styles.disabledBtn,
               ]}
-              disabled={visiblePieces.length === 0}
-              onPress={sendPiecesToBoard}
+              disabled={!sourceImage}
+              onPress={() => setHintOn((prev) => !prev)}
             >
-              <Text style={styles.sendBtnText}>{sendButtonLabel}</Text>
+              <Text style={styles.headerBtnText}>
+                {hintOn ? '💡 İpucu Kapat' : '💡 İpucu'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.headerBtn, !sourceImage && styles.disabledBtn]}
+              disabled={!sourceImage}
+              onPress={() => setEdgeOnly((prev) => !prev)}
+            >
+              <Text style={styles.headerBtnText}>
+                {edgeOnly ? 'Tüm Parçalar' : 'Kenarlar'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.headerBtn,
+                styles.cleanHeaderBtn,
+                looseSingleGroups.length === 0 && styles.disabledBtn,
+              ]}
+              disabled={looseSingleGroups.length === 0}
+              onPress={clearLooseSinglePieces}
+            >
+              <Text style={styles.headerBtnText}>🧹</Text>
             </TouchableOpacity>
           </View>
-        </View>
 
-        <BottomSheetFlatList
-          data={visiblePieces}
-          keyExtractor={(item) => item.id}
-          renderItem={renderTrayPiece}
-          numColumns={TRAY_COLS}
-          scrollEnabled={isSelectionMode}
-          removeClippedSubviews={Platform.OS === 'android'}
-          initialNumToRender={24}
-          maxToRenderPerBatch={24}
-          windowSize={7}
-          updateCellsBatchingPeriod={32}
-          contentContainerStyle={styles.pieceGrid}
-        />
-      </BottomSheet>
+<View
+  ref={boardRef}
+  {...boardPanResponder.panHandlers}
+  style={styles.board}
+  onLayout={(event) => {
+    setBoardLayout(event.nativeEvent.layout);
+    measureBoard();
+  }}
+>
+  <Animated.View
+    style={[
+      styles.boardCanvas,
+      {
+        width: boardLayout.width,
+        height: boardLayout.height,
+        transform: [
+          { translateX: boardPan.x },
+          { translateY: boardPan.y },
+          { scale: boardScale },
+        ],
+      },
+    ]}
+  >
+    {!sourceImage && (
+      <Text style={styles.boardLabel}>Başlamak için görsel seç</Text>
+    )}
 
-      {dragPreview && (
-        <View pointerEvents="none" style={styles.dragPreviewLayer}>
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.dragPreviewPiece,
-              {
-                width: dragPreview.visualSize,
-                height: dragPreview.visualSize,
-                transform: dragPreviewPan.getTranslateTransform(),
-              },
+    {sourceImage && activePiece && (
+      <View
+        pointerEvents="none"
+        style={[
+          styles.frameArea,
+          {
+            left: frameOrigin.x,
+            top: frameOrigin.y,
+            width: referenceWidth,
+            height: referenceHeight,
+          },
+        ]}
+      />
+    )}
+
+    {sourceImage && activePiece && hintOn && (
+      <Image
+        pointerEvents="none"
+        source={{ uri: sourceImage }}
+        style={[
+          styles.boardReferenceImage,
+          {
+            left: frameOrigin.x,
+            top: frameOrigin.y,
+            width: referenceWidth,
+            height: referenceHeight,
+          },
+        ]}
+        resizeMode="cover"
+      />
+    )}
+
+    {sourceImage && boardGroups.length === 0 && (
+      <Text style={styles.boardLabel}>Alt tepsiden parça gönder</Text>
+    )}
+
+    {orderedBoardGroups.map((group) => (
+      <DraggableGroup
+        key={group.id}
+        group={group}
+        onMoveEnd={onGroupMoveEnd}
+        getBoardScale={getBoardScale}
+      />
+    ))}
+  </Animated.View>
+
+  {sourceImage && (
+    <View pointerEvents="box-none" style={styles.boardToolLayer}>
+      <TouchableOpacity
+        activeOpacity={0.85}
+        style={styles.boardMiniButton}
+        onPress={resetBoardCamera}
+      >
+        <Text style={styles.boardMiniButtonText}>Zoom sıfırla</Text>
+      </TouchableOpacity>
+
+      <Text style={styles.boardGestureHint}>
+        2 parmakla yakınlaştır / taşı
+      </Text>
+    </View>
+  )}
+</View>
+
+          <BottomSheet
+            ref={sheetRef}
+            index={0}
+            snapPoints={snapPoints}
+            onChange={setSheetIndex}
+            enableContentPanningGesture={false}
+            enableHandlePanningGesture={!isTrayPieceDragging}
+            style={styles.sheetLayer}
+            backgroundStyle={styles.sheetBg}
+            handleIndicatorStyle={[
+              styles.indicator,
+              isTrayPieceDragging && styles.indicatorDisabled,
             ]}
           >
-            <PieceImage piece={dragPreview.piece} size={dragPreview.size} />
-          </Animated.View>
-        </View>
+            <View style={styles.trayHeader}>
+              <View>
+                <Text selectable={false} style={styles.trayTitle}>
+                  Parçalar ({visiblePieces.length})
+                </Text>
+
+                <Text selectable={false} style={styles.trayModeText}>
+                  {isSelectionMode ? 'Seçim modu açık' : 'Sürükle-bırak modu'}
+                </Text>
+              </View>
+
+              <View style={styles.trayActionRow}>
+                {isSelectionMode && (
+                  <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
+                    <Text style={styles.modeBtnText}>Sürükle</Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[
+                    styles.sendBtn,
+                    visiblePieces.length === 0 && styles.disabledBtn,
+                  ]}
+                  disabled={visiblePieces.length === 0}
+                  onPress={sendPiecesToBoard}
+                >
+                  <Text style={styles.sendBtnText}>{sendButtonLabel}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <BottomSheetFlatList
+              data={visiblePieces}
+              keyExtractor={(item) => item.id}
+              renderItem={renderTrayPiece}
+              numColumns={TRAY_COLS}
+              scrollEnabled={isSelectionMode}
+              removeClippedSubviews={Platform.OS === 'android'}
+              initialNumToRender={24}
+              maxToRenderPerBatch={24}
+              windowSize={7}
+              updateCellsBatchingPeriod={32}
+              contentContainerStyle={styles.pieceGrid}
+            />
+          </BottomSheet>
+
+          {referenceOpen && sourceImage && (
+  <FloatingReference
+    uri={sourceImage}
+    onClose={() => setReferenceOpen(false)}
+  />
+)}
+
+          {dragPreview && (
+            <View pointerEvents="none" style={styles.dragPreviewLayer}>
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.dragPreviewPiece,
+                  {
+                    width: dragPreview.visualSize,
+                    height: dragPreview.visualSize,
+                    transform: dragPreviewPan.getTranslateTransform(),
+                  },
+                ]}
+              >
+                <PieceImage piece={dragPreview.piece} size={dragPreview.size} />
+              </Animated.View>
+            </View>
+          )}
+        </>
       )}
 
       <Modal visible={presetOpen} transparent animationType="fade">
@@ -1478,7 +2181,7 @@ export default function PuzzleScreen() {
                 <TouchableOpacity
                   key={preset.id}
                   style={styles.presetCard}
-                  onPress={() => applyImage(preset.uri)}
+                  onPress={() => applyImage(preset.uri, preset.label)}
                 >
                   <Image
                     source={{ uri: preset.uri }}
@@ -1499,6 +2202,7 @@ export default function PuzzleScreen() {
         >
           <Pressable style={styles.modalBox}>
             <Text style={styles.modalTitle}>Kaç Parça Olsun?</Text>
+            <Text style={styles.modalSubtitle}>{pendingPuzzleTitle}</Text>
 
             <View style={styles.difficultyRow}>
               {DIFFICULTIES.map((number) => (
@@ -1514,20 +2218,6 @@ export default function PuzzleScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-
-      <Modal visible={referenceOpen} transparent animationType="fade">
-        <Pressable
-          style={styles.referenceOverlay}
-          onPress={() => setReferenceOpen(false)}
-        >
-          <Image
-            source={{ uri: sourceImage }}
-            style={styles.referenceImage}
-            resizeMode="contain"
-          />
-          <Text style={styles.referenceText}>Kapatmak için dokun</Text>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -1536,8 +2226,231 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingTop: 42,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#f2f2f2',
     userSelect: 'none',
+  },
+
+  homeScroll: {
+    flex: 1,
+    backgroundColor: '#f2f2f2',
+  },
+
+  homeContent: {
+    paddingHorizontal: 18,
+    paddingBottom: 36,
+  },
+
+  homeHero: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 20,
+    marginTop: 8,
+    marginBottom: 22,
+    borderWidth: 1,
+    borderColor: '#e7e2f4',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 16,
+    elevation: 3,
+  },
+
+  homeEyebrow: {
+    color: '#7e57c2',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.6,
+    marginBottom: 8,
+  },
+
+  homeTitle: {
+    color: '#202020',
+    fontSize: 30,
+    fontWeight: '900',
+    marginBottom: 8,
+  },
+
+  homeSubtitle: {
+    color: '#666666',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 18,
+  },
+
+  homePrimaryButton: {
+    backgroundColor: '#6d4bb3',
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+
+  homePrimaryButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 22,
+  },
+
+  sectionTitle: {
+    color: '#202020',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 12,
+  },
+
+  sectionCount: {
+    color: '#7e57c2',
+    fontSize: 14,
+    fontWeight: '900',
+    marginBottom: 12,
+  },
+
+  homePresetRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  homePresetCard: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: '#ececec',
+  },
+
+  homePresetImage: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 14,
+    marginBottom: 8,
+  },
+
+  homePresetLabel: {
+    color: '#333333',
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
+  emptyBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#ececec',
+  },
+
+  emptyTitle: {
+    color: '#222222',
+    fontSize: 16,
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+
+  emptyText: {
+    color: '#777777',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+
+  puzzleCardGrid: {
+    gap: 14,
+  },
+
+  puzzleCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 22,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e9e9e9',
+    shadowColor: '#000',
+    shadowOpacity: 0.07,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 14,
+    elevation: 2,
+  },
+
+  puzzleCardImage: {
+    width: '100%',
+    height: Math.min(220, width * 0.52),
+    backgroundColor: '#dddddd',
+  },
+
+  progressBubble: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#6d4bb3',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#ffffff',
+  },
+
+  progressBubbleText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  puzzleCardBody: {
+    padding: 14,
+  },
+
+  puzzleCardTitle: {
+    color: '#202020',
+    fontSize: 17,
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+
+  puzzleCardMeta: {
+    color: '#777777',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 12,
+  },
+
+  cardProgressTrack: {
+    height: 7,
+    backgroundColor: '#ece8f7',
+    borderRadius: 999,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+
+  cardProgressFill: {
+    height: '100%',
+    backgroundColor: '#7e57c2',
+    borderRadius: 999,
+  },
+
+  cardActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  cardActionText: {
+    color: '#6d4bb3',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  cardDeleteText: {
+    color: '#999999',
+    fontSize: 12,
+    fontWeight: '800',
   },
 
   header: {
@@ -1549,21 +2462,21 @@ const styles = StyleSheet.create({
   },
 
   headerBtn: {
-    backgroundColor: '#0f3460',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e9456050',
+    borderColor: '#e3e3e3',
   },
 
   headerBtnActive: {
-    backgroundColor: '#e94560',
-    borderColor: '#e94560',
+    backgroundColor: '#6d4bb3',
+    borderColor: '#6d4bb3',
   },
 
   headerBtnText: {
-    color: '#e0e0e0',
+    color: '#222222',
     fontWeight: '700',
     fontSize: 12,
   },
@@ -1584,18 +2497,63 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     marginBottom: 12,
     borderRadius: 12,
-    backgroundColor: '#16213e',
+    backgroundColor: '#e6e6e6',
     borderWidth: 1,
-    borderColor: '#0f3460',
+    borderColor: '#d7d7d7',
     overflow: 'hidden',
   },
+
+  boardCanvas: {
+  position: 'absolute',
+  left: 0,
+  top: 0,
+  overflow: 'visible',
+},
+
+boardToolLayer: {
+  position: 'absolute',
+  left: 10,
+  right: 10,
+  top: 10,
+  zIndex: 1000,
+  elevation: 1000,
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+},
+
+boardMiniButton: {
+  backgroundColor: '#ffffffee',
+  borderRadius: 999,
+  paddingHorizontal: 10,
+  paddingVertical: 6,
+  borderWidth: 1,
+  borderColor: '#dedede',
+},
+
+boardMiniButtonText: {
+  color: '#333333',
+  fontSize: 11,
+  fontWeight: '900',
+},
+
+boardGestureHint: {
+  color: '#555555',
+  fontSize: 10,
+  fontWeight: '800',
+  backgroundColor: '#ffffffbb',
+  paddingHorizontal: 9,
+  paddingVertical: 5,
+  borderRadius: 999,
+  overflow: 'hidden',
+},
 
   frameArea: {
     position: 'absolute',
     borderWidth: 2,
     borderStyle: 'dashed',
-    borderColor: '#87b6ff55',
-    backgroundColor: '#ffffff06',
+    borderColor: '#c7c7c7',
+    backgroundColor: '#f7f7f7',
     borderRadius: 6,
   },
 
@@ -1606,7 +2564,7 @@ const styles = StyleSheet.create({
   },
 
   boardLabel: {
-    color: '#e0e0e0',
+    color: '#222222',
     fontSize: 16,
     opacity: 0.35,
     textAlign: 'center',
@@ -1623,8 +2581,6 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
 
-  
-
   sheetLayer: {
     zIndex: 5,
     elevation: 5,
@@ -1632,12 +2588,12 @@ const styles = StyleSheet.create({
   },
 
   sheetBg: {
-    backgroundColor: '#0f3460',
+    backgroundColor: '#ffffff',
     overflow: 'visible',
   },
 
   indicator: {
-    backgroundColor: '#e94560',
+    backgroundColor: '#6d4bb3',
     width: 40,
   },
 
@@ -1655,14 +2611,14 @@ const styles = StyleSheet.create({
   },
 
   trayTitle: {
-    color: '#e0e0e0',
+    color: '#222222',
     fontWeight: '800',
     fontSize: 15,
     userSelect: 'none',
   },
 
   trayModeText: {
-    color: '#ffffff88',
+    color: '#777777',
     fontSize: 11,
     marginTop: 2,
     fontWeight: '600',
@@ -1689,7 +2645,7 @@ const styles = StyleSheet.create({
   },
 
   sendBtn: {
-    backgroundColor: '#e94560',
+    backgroundColor: '#6d4bb3',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 8,
@@ -1773,28 +2729,99 @@ const styles = StyleSheet.create({
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: '#000000aa',
+    backgroundColor: '#00000070',
     justifyContent: 'center',
     alignItems: 'center',
   },
 
   modalBox: {
     width: width * 0.9,
-    backgroundColor: '#0f3460',
+    backgroundColor: '#ffffff',
     borderRadius: 16,
     padding: 18,
   },
 
   modalTitle: {
-    color: '#fff',
+    color: '#222222',
     fontWeight: '900',
     fontSize: 18,
     marginBottom: 14,
     textAlign: 'center',
   },
 
+  modalSubtitle: {
+    color: '#666666',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: -8,
+    marginBottom: 14,
+    fontWeight: '700',
+  },
+
+  floatingReference: {
+  position: 'absolute',
+  left: 0,
+  top: 0,
+  width: Math.min(width * 0.72, 340),
+  aspectRatio: 1,
+  backgroundColor: '#ffffff',
+  borderRadius: 14,
+  padding: 6,
+  zIndex: 9999,
+  elevation: 9999,
+  shadowColor: '#000',
+  shadowOpacity: 0.2,
+  shadowOffset: { width: 0, height: 8 },
+  shadowRadius: 18,
+},
+
+floatingReferenceImage: {
+  width: '100%',
+  height: '100%',
+  borderRadius: 10,
+  backgroundColor: '#dddddd',
+},
+
+floatingReferenceClose: {
+  position: 'absolute',
+  right: -10,
+  top: -10,
+  width: 34,
+  height: 34,
+  borderRadius: 17,
+  backgroundColor: '#ffffff',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderWidth: 1,
+  borderColor: '#dddddd',
+  elevation: 3,
+},
+
+floatingReferenceCloseText: {
+  color: '#222222',
+  fontSize: 24,
+  lineHeight: 26,
+  fontWeight: '600',
+},
+
+floatingReferenceHint: {
+  position: 'absolute',
+  left: 10,
+  bottom: 10,
+  backgroundColor: '#00000060',
+  borderRadius: 999,
+  paddingHorizontal: 9,
+  paddingVertical: 5,
+},
+
+floatingReferenceHintText: {
+  color: '#ffffff',
+  fontSize: 10,
+  fontWeight: '800',
+},
+
   gallerySelectBtn: {
-    backgroundColor: '#e94560',
+    backgroundColor: '#6d4bb3',
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
@@ -1824,7 +2851,7 @@ const styles = StyleSheet.create({
   },
 
   presetLabel: {
-    color: '#e0e0e0',
+    color: '#222222',
     fontSize: 11,
     fontWeight: '700',
     textAlign: 'center',
@@ -1838,7 +2865,7 @@ const styles = StyleSheet.create({
 
   diffBtn: {
     width: '48%',
-    backgroundColor: '#e94560',
+    backgroundColor: '#6d4bb3',
     paddingVertical: 14,
     borderRadius: 10,
     marginBottom: 10,
