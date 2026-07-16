@@ -340,33 +340,31 @@ export default function PuzzleScreen() {
   }, [boardPan, boardScale]);
 
   // selectDifficulty ve openSavedPuzzle'ın ortak "puzzle ekranına gir + oyun
-  // durumunu sıfırla" adımları. completed → tamamlanmış puzzle tekrar
-  // açılırsa tebrik modalının yeniden açılmasını engelleyen bayrak.
-  const enterPuzzleView = useCallback(
-    (completed) => {
-      setSelectedPieceIds([]);
-      setEdgeOnly(false);
-      setHintOn(false);
-      setSheetIndex(0);
-      setDragPreview(null);
-      setIsTrayPieceDragging(false);
-      setCompletionOpen(false);
+  // durumunu sıfırla" adımları. completionShownRef her girişte sıfırlanır ki
+  // zaten tamamlanmış bir puzzle tekrar açıldığında tebrik modalı bir daha
+  // gösterilebilsin.
+  const enterPuzzleView = useCallback(() => {
+    setSelectedPieceIds([]);
+    setEdgeOnly(false);
+    setHintOn(false);
+    setSheetIndex(0);
+    setDragPreview(null);
+    setIsTrayPieceDragging(false);
+    setCompletionOpen(false);
 
-      completionShownRef.current = completed;
+    completionShownRef.current = false;
 
-      setScreenMode('puzzle');
+    setScreenMode('puzzle');
 
-      dragPreviewRef.current = null;
-      dragPreviewPan.setValue({ x: 0, y: 0 });
+    dragPreviewRef.current = null;
+    dragPreviewPan.setValue({ x: 0, y: 0 });
 
-      resetBoardCamera();
+    resetBoardCamera();
 
-      requestAnimationFrame(() => {
-        sheetRef.current?.snapToIndex(0);
-      });
-    },
-    [dragPreviewPan, resetBoardCamera]
-  );
+    requestAnimationFrame(() => {
+      sheetRef.current?.snapToIndex(0);
+    });
+  }, [dragPreviewPan, resetBoardCamera]);
 
   const boardPanResponder = useMemo(
     () =>
@@ -620,7 +618,7 @@ export default function PuzzleScreen() {
       setPendingUri(null);
       setPendingPuzzleId(null);
 
-      enterPuzzleView(false);
+      enterPuzzleView();
     },
     [
       enterPuzzleView,
