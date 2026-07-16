@@ -167,10 +167,11 @@ export function edgesOf(piece) {
 // ile çarpılır) 9 nokta: düz kenardan ayrılırken önce hafifçe İÇE kıvrılıp
 // (w=-t, "kavis"), sonra dar bir BOYUNA (w=t) çıkıp, oradan çok daha derin
 // yuvarlak bir BAŞA (w=3t) şişkinleşiyor — üç kübik bezier ile.
-// Not: derinlik 3*TAB_T'ye kadar çıkıyor (bkz. tabPoints), bu yüzden
-// TAB_T*3, overhang(size)=size*TAB_RATIO(0.2) payını aşmamalı — aksi halde
-// baş SVG tuvalinin dışına taşıp kırpılır.
-const TAB_T = 0.063;
+// Draradech'in referans sitesindeki varsayılan "Tab Size: %20" değeri
+// (t = %20/2 = 0.1) birebir kullanılıyor. Derinlik 3*TAB_T'ye kadar çıktığı
+// için (bkz. tabPoints) overhang(size)=size*TAB_RATIO bunu karşılayacak
+// kadar büyük tutuluyor (constants/puzzle.js: TAB_RATIO=0.34).
+const TAB_T = 0.1;
 
 function tabPoints() {
   const t = TAB_T;
