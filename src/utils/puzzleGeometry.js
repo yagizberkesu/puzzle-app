@@ -161,6 +161,44 @@ export function edgesOf(piece) {
   return piece.edges || legacyEdgesOf(piece);
 }
 
+// Klasik yapboz eklemi: Draradech'in yaygın kullanılan, kanıtlanmış jigsaw SVG
+// üretici formülünden uyarlandı (https://gist.github.com/Draradech/35d36347312ca6d0887aa7d55f366e30).
+// Kenar boyunca parametrik konum (s: 0→1) ve dikey derinlik oranında (w, dir
+// ile çarpılır) 9 nokta: düz kenardan ayrılırken önce hafifçe İÇE kıvrılıp
+// (w=-t, "kavis"), sonra dar bir BOYUNA (w=t) çıkıp, oradan çok daha derin
+// yuvarlak bir BAŞA (w=3t) şişkinleşiyor — üç kübik bezier ile.
+// Not: derinlik 3*TAB_T'ye kadar çıkıyor (bkz. tabPoints), bu yüzden
+// TAB_T*3, overhang(size)=size*TAB_RATIO(0.2) payını aşmamalı — aksi halde
+// baş SVG tuvalinin dışına taşıp kırpılır.
+const TAB_T = 0.063;
+
+function tabPoints() {
+  const t = TAB_T;
+  return [
+    { s: 0.2, w: 0 },
+    { s: 0.5, w: -t },
+    { s: 0.5 - t, w: t },
+    { s: 0.5 - 2 * t, w: 3 * t },
+    { s: 0.5 + 2 * t, w: 3 * t },
+    { s: 0.5 + t, w: t },
+    { s: 0.5, w: -t },
+    { s: 0.8, w: 0 },
+    { s: 1, w: 0 },
+  ];
+}
+
+// mapPoint(s, w) → {x, y}; kenarın yönüne göre s (kenar boyunca) ve w
+// (dir ile çarpılmış derinlik) eksenlerini gerçek piksel koordinatına çevirir.
+function tabCurveCommands(mapPoint) {
+  const p = tabPoints().map(({ s, w }) => mapPoint(s, w));
+
+  return (
+    ` C ${p[0].x} ${p[0].y}, ${p[1].x} ${p[1].y}, ${p[2].x} ${p[2].y}` +
+    ` C ${p[3].x} ${p[3].y}, ${p[4].x} ${p[4].y}, ${p[5].x} ${p[5].y}` +
+    ` C ${p[6].x} ${p[6].y}, ${p[7].x} ${p[7].y}, ${p[8].x} ${p[8].y}`
+  );
+}
+
 export function jigsawPath(piece, size) {
   const oh = overhang(size);
 
@@ -168,20 +206,6 @@ export function jigsawPath(piece, size) {
   const y0 = oh;
   const x1 = oh + size;
   const y1 = oh + size;
-
-  const midX = oh + size / 2;
-  const midY = oh + size / 2;
-
-  // Gerçek yapboz çıkıntıları tek düze bir tümsek değil, "omuz → dar boyun →
-  // yuvarlak geniş baş → dar boyun → omuz" şeklinde bir S-kıvrımı çiziyor.
-  // Basitçe iki genişlik değerini yer değiştirmek (önceki deneme) orantısız,
-  // "ucube" görünen tek büyük bir şişkinlik yaratmıştı — üç ayrı genişlik
-  // (omuz/boyun/baş) ve beş bezier segmentiyle kademeli, yumuşak bir geçiş
-  // sağlanıyor.
-  const shoulderHalf = size * 0.13; // düz kenarla birleşen omuz genişliği
-  const neckHalf = size * 0.075; // boyunun en dar noktası
-  const bulbHalf = size * 0.17; // yuvarlak başın en geniş noktası
-  const depth = size * 0.2;
 
   const e = edgesOf(piece);
 
@@ -191,52 +215,28 @@ export function jigsawPath(piece, size) {
     d += ` L ${x1} ${y0}`;
   } else {
     const dir = e.top === 'out' ? -1 : 1;
-    d += ` L ${midX - shoulderHalf} ${y0}
-      C ${midX - shoulderHalf} ${y0 + dir * depth * 0.12}, ${midX - neckHalf} ${y0 + dir * depth * 0.12}, ${midX - neckHalf} ${y0 + dir * depth * 0.32}
-      C ${midX - neckHalf} ${y0 + dir * depth * 0.52}, ${midX - bulbHalf} ${y0 + dir * depth * 0.52}, ${midX - bulbHalf} ${y0 + dir * depth * 0.75}
-      C ${midX - bulbHalf} ${y0 + dir * depth * 1.02}, ${midX + bulbHalf} ${y0 + dir * depth * 1.02}, ${midX + bulbHalf} ${y0 + dir * depth * 0.75}
-      C ${midX + bulbHalf} ${y0 + dir * depth * 0.52}, ${midX + neckHalf} ${y0 + dir * depth * 0.52}, ${midX + neckHalf} ${y0 + dir * depth * 0.32}
-      C ${midX + neckHalf} ${y0 + dir * depth * 0.12}, ${midX + shoulderHalf} ${y0 + dir * depth * 0.12}, ${midX + shoulderHalf} ${y0}
-      L ${x1} ${y0}`;
+    d += tabCurveCommands((s, w) => ({ x: x0 + s * size, y: y0 + dir * w * size }));
   }
 
   if (e.right === 'flat') {
     d += ` L ${x1} ${y1}`;
   } else {
     const dir = e.right === 'out' ? 1 : -1;
-    d += ` L ${x1} ${midY - shoulderHalf}
-      C ${x1 + dir * depth * 0.12} ${midY - shoulderHalf}, ${x1 + dir * depth * 0.12} ${midY - neckHalf}, ${x1 + dir * depth * 0.32} ${midY - neckHalf}
-      C ${x1 + dir * depth * 0.52} ${midY - neckHalf}, ${x1 + dir * depth * 0.52} ${midY - bulbHalf}, ${x1 + dir * depth * 0.75} ${midY - bulbHalf}
-      C ${x1 + dir * depth * 1.02} ${midY - bulbHalf}, ${x1 + dir * depth * 1.02} ${midY + bulbHalf}, ${x1 + dir * depth * 0.75} ${midY + bulbHalf}
-      C ${x1 + dir * depth * 0.52} ${midY + bulbHalf}, ${x1 + dir * depth * 0.52} ${midY + neckHalf}, ${x1 + dir * depth * 0.32} ${midY + neckHalf}
-      C ${x1 + dir * depth * 0.12} ${midY + neckHalf}, ${x1 + dir * depth * 0.12} ${midY + shoulderHalf}, ${x1} ${midY + shoulderHalf}
-      L ${x1} ${y1}`;
+    d += tabCurveCommands((s, w) => ({ x: x1 + dir * w * size, y: y0 + s * size }));
   }
 
   if (e.bottom === 'flat') {
     d += ` L ${x0} ${y1}`;
   } else {
     const dir = e.bottom === 'out' ? 1 : -1;
-    d += ` L ${midX + shoulderHalf} ${y1}
-      C ${midX + shoulderHalf} ${y1 + dir * depth * 0.12}, ${midX + neckHalf} ${y1 + dir * depth * 0.12}, ${midX + neckHalf} ${y1 + dir * depth * 0.32}
-      C ${midX + neckHalf} ${y1 + dir * depth * 0.52}, ${midX + bulbHalf} ${y1 + dir * depth * 0.52}, ${midX + bulbHalf} ${y1 + dir * depth * 0.75}
-      C ${midX + bulbHalf} ${y1 + dir * depth * 1.02}, ${midX - bulbHalf} ${y1 + dir * depth * 1.02}, ${midX - bulbHalf} ${y1 + dir * depth * 0.75}
-      C ${midX - bulbHalf} ${y1 + dir * depth * 0.52}, ${midX - neckHalf} ${y1 + dir * depth * 0.52}, ${midX - neckHalf} ${y1 + dir * depth * 0.32}
-      C ${midX - neckHalf} ${y1 + dir * depth * 0.12}, ${midX - shoulderHalf} ${y1 + dir * depth * 0.12}, ${midX - shoulderHalf} ${y1}
-      L ${x0} ${y1}`;
+    d += tabCurveCommands((s, w) => ({ x: x1 - s * size, y: y1 + dir * w * size }));
   }
 
   if (e.left === 'flat') {
     d += ` L ${x0} ${y0}`;
   } else {
     const dir = e.left === 'out' ? -1 : 1;
-    d += ` L ${x0} ${midY + shoulderHalf}
-      C ${x0 + dir * depth * 0.12} ${midY + shoulderHalf}, ${x0 + dir * depth * 0.12} ${midY + neckHalf}, ${x0 + dir * depth * 0.32} ${midY + neckHalf}
-      C ${x0 + dir * depth * 0.52} ${midY + neckHalf}, ${x0 + dir * depth * 0.52} ${midY + bulbHalf}, ${x0 + dir * depth * 0.75} ${midY + bulbHalf}
-      C ${x0 + dir * depth * 1.02} ${midY + bulbHalf}, ${x0 + dir * depth * 1.02} ${midY - bulbHalf}, ${x0 + dir * depth * 0.75} ${midY - bulbHalf}
-      C ${x0 + dir * depth * 0.52} ${midY - bulbHalf}, ${x0 + dir * depth * 0.52} ${midY - neckHalf}, ${x0 + dir * depth * 0.32} ${midY - neckHalf}
-      C ${x0 + dir * depth * 0.12} ${midY - neckHalf}, ${x0 + dir * depth * 0.12} ${midY - shoulderHalf}, ${x0} ${midY - shoulderHalf}
-      L ${x0} ${y0}`;
+    d += tabCurveCommands((s, w) => ({ x: x0 + dir * w * size, y: y1 - s * size }));
   }
 
   return `${d} Z`;
