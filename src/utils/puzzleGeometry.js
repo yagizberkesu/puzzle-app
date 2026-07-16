@@ -59,9 +59,85 @@ export function solvedPosition(piece, origin) {
   };
 }
 
+export function inverse(e) {
+  if (e === 'out') return 'in';
+  if (e === 'in') return 'out';
+  return 'flat';
+}
+
+// Eski (row+col) checkerboard yöntemi: hem dikey hem yatay kenar aynı
+// (row+col)%2 değerinden türetildiği için bir parçanın DÖRT kenarı da
+// zorunlu olarak aynı yöne (ya hepsi dışa, ya hepsi içe) çıkıyordu — gerçek
+// bir yapbozda her kenar birbirinden bağımsız olmalı. Sadece bu alanı
+// içermeyen ESKİ kayıtlı puzzle'lar için geriye dönük uyumluluk amacıyla
+// tutuluyor; yeni üretilen parçalarda buildEdgeGrid kullanılıyor.
+function legacyVerticalEdge(row, col) {
+  return (row + col) % 2 === 0 ? 'out' : 'in';
+}
+
+function legacyHorizontalEdge(row, col) {
+  return (row + col) % 2 === 0 ? 'out' : 'in';
+}
+
+function legacyEdgesOf(piece) {
+  return {
+    top:
+      piece.row === 0
+        ? 'flat'
+        : inverse(legacyHorizontalEdge(piece.row - 1, piece.col)),
+    right:
+      piece.col === piece.cols - 1
+        ? 'flat'
+        : legacyVerticalEdge(piece.row, piece.col),
+    bottom:
+      piece.row === piece.rows - 1
+        ? 'flat'
+        : legacyHorizontalEdge(piece.row, piece.col),
+    left:
+      piece.col === 0
+        ? 'flat'
+        : inverse(legacyVerticalEdge(piece.row, piece.col - 1)),
+  };
+}
+
+// Her paylaşılan kenar (iki komşu parça arasındaki sınır) için bağımsız bir
+// yön ata: bir parçanın üst/alt/sağ/sol kenarları birbirinden habersiz,
+// gerçek bir yapbozdaki gibi karışık (bazısı dışa çıkıntı, bazısı içe
+// girinti) olabiliyor. Paylaşılan kenarın iki tarafı her zaman ters yönde
+// (biri 'out', komşusu 'in') tutuluyor ki parçalar birbirine tam otursun.
+function buildEdgeGrid(rows, cols) {
+  const edges = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => ({
+      top: 'flat',
+      right: 'flat',
+      bottom: 'flat',
+      left: 'flat',
+    }))
+  );
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (c < cols - 1) {
+        const dir = Math.random() < 0.5 ? 'out' : 'in';
+        edges[r][c].right = dir;
+        edges[r][c + 1].left = inverse(dir);
+      }
+
+      if (r < rows - 1) {
+        const dir = Math.random() < 0.5 ? 'out' : 'in';
+        edges[r][c].bottom = dir;
+        edges[r + 1][c].top = inverse(dir);
+      }
+    }
+  }
+
+  return edges;
+}
+
 export function createPieces(uri, totalPieces) {
   const grid = Math.round(Math.sqrt(totalPieces));
   const stamp = Date.now();
+  const edgeGrid = buildEdgeGrid(grid, grid);
 
   return Array.from({ length: grid * grid }, (_, i) => {
     const row = Math.floor(i / grid);
@@ -76,39 +152,13 @@ export function createPieces(uri, totalPieces) {
       rows: grid,
       cols: grid,
       isEdge: row === 0 || col === 0 || row === grid - 1 || col === grid - 1,
+      edges: edgeGrid[row][col],
     };
   });
 }
 
-export function inverse(e) {
-  if (e === 'out') return 'in';
-  if (e === 'in') return 'out';
-  return 'flat';
-}
-
-export function verticalEdge(row, col) {
-  return (row + col) % 2 === 0 ? 'out' : 'in';
-}
-
-export function horizontalEdge(row, col) {
-  return (row + col) % 2 === 0 ? 'out' : 'in';
-}
-
 export function edgesOf(piece) {
-  return {
-    top:
-      piece.row === 0
-        ? 'flat'
-        : inverse(horizontalEdge(piece.row - 1, piece.col)),
-    right:
-      piece.col === piece.cols - 1 ? 'flat' : verticalEdge(piece.row, piece.col),
-    bottom:
-      piece.row === piece.rows - 1 ? 'flat' : horizontalEdge(piece.row, piece.col),
-    left:
-      piece.col === 0
-        ? 'flat'
-        : inverse(verticalEdge(piece.row, piece.col - 1)),
-  };
+  return piece.edges || legacyEdgesOf(piece);
 }
 
 export function jigsawPath(piece, size) {
