@@ -1,6 +1,7 @@
 import { Platform, StyleSheet } from 'react-native';
 import { THEME } from '../constants/theme';
 import { BREAKPOINT_COMPACT, width } from '../constants/layout';
+import { TOP_BAR_HEIGHT, TRAY_GRID_H_PADDING, TRAY_ITEM_GAP } from '../constants/puzzle';
 
 const styles = StyleSheet.create({
 
@@ -240,7 +241,7 @@ const styles = StyleSheet.create({
   },
 
   gameTopBar: {
-  height: 58,
+  height: TOP_BAR_HEIGHT,
   paddingHorizontal: 14,
   backgroundColor: THEME.top,
   borderBottomWidth: 1,
@@ -511,7 +512,7 @@ topScoreAbsolute: {
   },
 
   pieceGrid: {
-  paddingHorizontal: 18,
+  paddingHorizontal: TRAY_GRID_H_PADDING,
   paddingTop: 14,
   paddingBottom: Platform.OS === 'android' ? 150 : 118,
   overflow: 'visible',
@@ -519,7 +520,7 @@ topScoreAbsolute: {
 },
 
   trayPiece: {
-    margin: 6,
+    margin: TRAY_ITEM_GAP,
     overflow: 'visible',
     backgroundColor: 'transparent',
     alignItems: 'center',
