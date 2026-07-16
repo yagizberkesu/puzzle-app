@@ -523,15 +523,19 @@ export default function PuzzleScreen() {
       setActivePuzzleId(record.id);
       setSourceImage(record.imageUri);
 
+      // Boş bir tepsi (record.pieces = []) geçerli bir durumdur: tüm parçalar
+      // zaten board'a gönderilmiş demektir (tamamlanmış her puzzle'da böyle).
+      // Bunu eksik veriyle karıştırıp yeni bir parça seti üretmek, toplam
+      // parça sayısını ikiye katlayıp ilerlemeyi bozuyordu.
       setPieces(
-        Array.isArray(record.pieces) && record.pieces.length
+        Array.isArray(record.pieces)
           ? record.pieces
           : createPieces(record.imageUri, record.totalPieces)
       );
 
       setBoardGroups(Array.isArray(record.boardGroups) ? record.boardGroups : []);
 
-      enterPuzzleView(Boolean(record.completed));
+      enterPuzzleView();
     },
     [enterPuzzleView, queueDifficulty]
   );
