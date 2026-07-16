@@ -1222,12 +1222,15 @@ const custom = {
             )}
           </View>
 
+          {/* Sürükle modunda content panning kapalı: sheet'in native pan
+              gesture'ı parça PanResponder'ını iptal ediyordu. Sadece seçim
+              modunda (liste kaydırılırken) açık — bu native yarışı çözüyor. */}
           <BottomSheet
   ref={sheetRef}
   index={0}
   snapPoints={snapPoints}
   onChange={setSheetIndex}
-  enableContentPanningGesture={!isTrayPieceDragging}
+  enableContentPanningGesture={isSelectionMode}
   enableHandlePanningGesture={!isTrayPieceDragging}
             style={styles.sheetLayer}
             backgroundStyle={styles.sheetBg}
