@@ -172,8 +172,13 @@ export function jigsawPath(piece, size) {
   const midX = oh + size / 2;
   const midY = oh + size / 2;
 
-  const neck = size * 0.1;
-  const head = size * 0.18;
+  // Gerçek yapboz çıkıntıları düz kenarda DAR bir "boyun"la başlayıp, en
+  // derin/uzak noktada YUVARLAK ve GENİŞ bir "baş" ile şişkinleşir (mantar
+  // kesiti gibi). Eskiden bu ilişki tersti (kenarda geniş, uçta dar) — bu da
+  // çıkıntıların boyun kıvrımı olmayan, tek düze bir tümsek gibi görünmesine
+  // sebep oluyordu.
+  const baseHalf = size * 0.1; // düz kenarla birleşen dar boyun genişliği
+  const bulbHalf = size * 0.2; // en derin noktadaki yuvarlak baş genişliği
   const depth = size * 0.21;
 
   const e = edgesOf(piece);
@@ -184,10 +189,10 @@ export function jigsawPath(piece, size) {
     d += ` L ${x1} ${y0}`;
   } else {
     const dir = e.top === 'out' ? -1 : 1;
-    d += ` L ${midX - head} ${y0}
-      C ${midX - head * 0.75} ${y0}, ${midX - neck} ${y0 + dir * depth * 0.15}, ${midX - neck} ${y0 + dir * depth * 0.45}
-      C ${midX - neck} ${y0 + dir * depth}, ${midX + neck} ${y0 + dir * depth}, ${midX + neck} ${y0 + dir * depth * 0.45}
-      C ${midX + neck} ${y0 + dir * depth * 0.15}, ${midX + head * 0.75} ${y0}, ${midX + head} ${y0}
+    d += ` L ${midX - baseHalf} ${y0}
+      C ${midX - baseHalf * 0.75} ${y0}, ${midX - bulbHalf} ${y0 + dir * depth * 0.15}, ${midX - bulbHalf} ${y0 + dir * depth * 0.45}
+      C ${midX - bulbHalf} ${y0 + dir * depth}, ${midX + bulbHalf} ${y0 + dir * depth}, ${midX + bulbHalf} ${y0 + dir * depth * 0.45}
+      C ${midX + bulbHalf} ${y0 + dir * depth * 0.15}, ${midX + baseHalf * 0.75} ${y0}, ${midX + baseHalf} ${y0}
       L ${x1} ${y0}`;
   }
 
@@ -195,10 +200,10 @@ export function jigsawPath(piece, size) {
     d += ` L ${x1} ${y1}`;
   } else {
     const dir = e.right === 'out' ? 1 : -1;
-    d += ` L ${x1} ${midY - head}
-      C ${x1} ${midY - head * 0.75}, ${x1 + dir * depth * 0.15} ${midY - neck}, ${x1 + dir * depth * 0.45} ${midY - neck}
-      C ${x1 + dir * depth} ${midY - neck}, ${x1 + dir * depth} ${midY + neck}, ${x1 + dir * depth * 0.45} ${midY + neck}
-      C ${x1 + dir * depth * 0.15} ${midY + neck}, ${x1} ${midY + head * 0.75}, ${x1} ${midY + head}
+    d += ` L ${x1} ${midY - baseHalf}
+      C ${x1} ${midY - baseHalf * 0.75}, ${x1 + dir * depth * 0.15} ${midY - bulbHalf}, ${x1 + dir * depth * 0.45} ${midY - bulbHalf}
+      C ${x1 + dir * depth} ${midY - bulbHalf}, ${x1 + dir * depth} ${midY + bulbHalf}, ${x1 + dir * depth * 0.45} ${midY + bulbHalf}
+      C ${x1 + dir * depth * 0.15} ${midY + bulbHalf}, ${x1} ${midY + baseHalf * 0.75}, ${x1} ${midY + baseHalf}
       L ${x1} ${y1}`;
   }
 
@@ -206,10 +211,10 @@ export function jigsawPath(piece, size) {
     d += ` L ${x0} ${y1}`;
   } else {
     const dir = e.bottom === 'out' ? 1 : -1;
-    d += ` L ${midX + head} ${y1}
-      C ${midX + head * 0.75} ${y1}, ${midX + neck} ${y1 + dir * depth * 0.15}, ${midX + neck} ${y1 + dir * depth * 0.45}
-      C ${midX + neck} ${y1 + dir * depth}, ${midX - neck} ${y1 + dir * depth}, ${midX - neck} ${y1 + dir * depth * 0.45}
-      C ${midX - neck} ${y1 + dir * depth * 0.15}, ${midX - head * 0.75} ${y1}, ${midX - head} ${y1}
+    d += ` L ${midX + baseHalf} ${y1}
+      C ${midX + baseHalf * 0.75} ${y1}, ${midX + bulbHalf} ${y1 + dir * depth * 0.15}, ${midX + bulbHalf} ${y1 + dir * depth * 0.45}
+      C ${midX + bulbHalf} ${y1 + dir * depth}, ${midX - bulbHalf} ${y1 + dir * depth}, ${midX - bulbHalf} ${y1 + dir * depth * 0.45}
+      C ${midX - bulbHalf} ${y1 + dir * depth * 0.15}, ${midX - baseHalf * 0.75} ${y1}, ${midX - baseHalf} ${y1}
       L ${x0} ${y1}`;
   }
 
@@ -217,10 +222,10 @@ export function jigsawPath(piece, size) {
     d += ` L ${x0} ${y0}`;
   } else {
     const dir = e.left === 'out' ? -1 : 1;
-    d += ` L ${x0} ${midY + head}
-      C ${x0} ${midY + head * 0.75}, ${x0 + dir * depth * 0.15} ${midY + neck}, ${x0 + dir * depth * 0.45} ${midY + neck}
-      C ${x0 + dir * depth} ${midY + neck}, ${x0 + dir * depth} ${midY - neck}, ${x0 + dir * depth * 0.45} ${midY - neck}
-      C ${x0 + dir * depth * 0.15} ${midY - neck}, ${x0} ${midY - head * 0.75}, ${x0} ${midY - head}
+    d += ` L ${x0} ${midY + baseHalf}
+      C ${x0} ${midY + baseHalf * 0.75}, ${x0 + dir * depth * 0.15} ${midY + bulbHalf}, ${x0 + dir * depth * 0.45} ${midY + bulbHalf}
+      C ${x0 + dir * depth} ${midY + bulbHalf}, ${x0 + dir * depth} ${midY - bulbHalf}, ${x0 + dir * depth * 0.45} ${midY - bulbHalf}
+      C ${x0 + dir * depth * 0.15} ${midY - bulbHalf}, ${x0} ${midY - baseHalf * 0.75}, ${x0} ${midY - baseHalf}
       L ${x0} ${y0}`;
   }
 
