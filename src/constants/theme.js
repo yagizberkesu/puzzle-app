@@ -1,0 +1,16 @@
+export const THEME = {
+  bg: '#f2f2f2',
+  top: '#fbfbfb',
+  topLine: '#dddddd',
+  board: '#e5e5e5',
+  boardLine: '#d4d4d4',
+  text: '#202020',
+  muted: '#777777',
+  soft: '#aaaaaa',
+  purple: '#5f43aa',
+  purple2: '#8e6ad8',
+  purpleSoft: '#eee8ff',
+  orange: '#c47b18',
+  white: '#ffffff',
+  black: '#181818',
+};
