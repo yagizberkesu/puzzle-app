@@ -207,7 +207,7 @@ export default function PuzzleScreen() {
         }
       })
       .catch((e) => {
-        console.log('Puzzle storage load error:', e);
+        if (__DEV__) console.log('Puzzle storage load error:', e);
       })
       .finally(() => {
         if (mounted) setHomeLoading(false);
@@ -222,7 +222,7 @@ export default function PuzzleScreen() {
     setSavedPuzzles(next);
 
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((e) => {
-      console.log('Puzzle storage save error:', e);
+      if (__DEV__) console.log('Puzzle storage save error:', e);
     });
   }, []);
 
@@ -231,7 +231,7 @@ export default function PuzzleScreen() {
       const next = prev.map((r) => (r.id === id ? updater(r) : r));
 
       AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((e) => {
-        console.log('Puzzle storage save error:', e);
+        if (__DEV__) console.log('Puzzle storage save error:', e);
       });
 
       return next;
@@ -338,6 +338,35 @@ export default function PuzzleScreen() {
       y: 0,
     });
   }, [boardPan, boardScale]);
+
+  // selectDifficulty ve openSavedPuzzle'ın ortak "puzzle ekranına gir + oyun
+  // durumunu sıfırla" adımları. completed → tamamlanmış puzzle tekrar
+  // açılırsa tebrik modalının yeniden açılmasını engelleyen bayrak.
+  const enterPuzzleView = useCallback(
+    (completed) => {
+      setSelectedPieceIds([]);
+      setEdgeOnly(false);
+      setHintOn(false);
+      setSheetIndex(0);
+      setDragPreview(null);
+      setIsTrayPieceDragging(false);
+      setCompletionOpen(false);
+
+      completionShownRef.current = completed;
+
+      setScreenMode('puzzle');
+
+      dragPreviewRef.current = null;
+      dragPreviewPan.setValue({ x: 0, y: 0 });
+
+      resetBoardCamera();
+
+      requestAnimationFrame(() => {
+        sheetRef.current?.snapToIndex(0);
+      });
+    },
+    [dragPreviewPan, resetBoardCamera]
+  );
 
   const boardPanResponder = useMemo(
     () =>
@@ -477,7 +506,7 @@ export default function PuzzleScreen() {
 
       createPuzzleCard(img.uri, 'Galeriden Puzzle');
     } catch (e) {
-      console.log('Gallery pick error:', e);
+      if (__DEV__) console.log('Gallery pick error:', e);
 
       Alert.alert(
         'Görsel seçilemedi',
@@ -503,31 +532,10 @@ export default function PuzzleScreen() {
       );
 
       setBoardGroups(Array.isArray(record.boardGroups) ? record.boardGroups : []);
-      setSelectedPieceIds([]);
-      setEdgeOnly(false);
-      setHintOn(false);
-      setSheetIndex(0);
-      setDragPreview(null);
-      setIsTrayPieceDragging(false);
-      setCompletionOpen(false);
 
-      completionShownRef.current = Boolean(record.completed);
-
-      setScreenMode('puzzle');
-
-      dragPreviewRef.current = null;
-      dragPreviewPan.setValue({
-        x: 0,
-        y: 0,
-      });
-
-      resetBoardCamera();
-
-      requestAnimationFrame(() => {
-        sheetRef.current?.snapToIndex(0);
-      });
+      enterPuzzleView(Boolean(record.completed));
     },
-    [dragPreviewPan, queueDifficulty, resetBoardCamera]
+    [enterPuzzleView, queueDifficulty]
   );
 
   const deletePuzzle = useCallback(
@@ -608,40 +616,18 @@ export default function PuzzleScreen() {
       setSourceImage(pendingUri);
       setPieces(nextPieces);
       setBoardGroups([]);
-      setSelectedPieceIds([]);
       setDifficultyOpen(false);
       setPendingUri(null);
       setPendingPuzzleId(null);
-      setEdgeOnly(false);
-      setHintOn(false);
-      setSheetIndex(0);
-      setDragPreview(null);
-      setIsTrayPieceDragging(false);
-      setCompletionOpen(false);
 
-      completionShownRef.current = false;
-
-      setScreenMode('puzzle');
-
-      dragPreviewRef.current = null;
-      dragPreviewPan.setValue({
-        x: 0,
-        y: 0,
-      });
-
-      resetBoardCamera();
-
-      requestAnimationFrame(() => {
-        sheetRef.current?.snapToIndex(0);
-      });
+      enterPuzzleView(false);
     },
     [
-      dragPreviewPan,
+      enterPuzzleView,
       pendingPuzzleId,
       pendingPuzzleTitle,
       pendingUri,
       persistPuzzles,
-      resetBoardCamera,
       savedPuzzles,
       updatePuzzleRecord,
     ]
@@ -1301,7 +1287,7 @@ const custom = {
                   disabled={visiblePieces.length === 0}
                   onPress={sendPiecesToBoard}
                 >
-                  <Text style={styles.traySendWideText}>Send ({selectedCount})</Text>
+                  <Text style={styles.traySendWideText}>Gönder ({selectedCount})</Text>
                 </TouchableOpacity>
               </View>
             )}
