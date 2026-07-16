@@ -25,10 +25,14 @@ import {
   PRESETS,
   SELECT_MODE_INDEX,
   SEND_COUNT,
+  SHEET_MIN_HEIGHT,
+  SHEET_TOP_GAP,
   STORAGE_KEY,
-  TAB_RATIO,
+  TOP_BAR_HEIGHT,
+  TRAY_GRID_H_PADDING,
+  TRAY_ITEM_GAP,
 } from '../constants/puzzle';
-import { BREAKPOINT_COMPACT, TRAY_COLS, height, width } from '../constants/layout';
+import { height, width } from '../constants/layout';
 import {
   center,
   clamp,
@@ -105,7 +109,7 @@ export default function PuzzleScreen() {
   const [edgeOnly, setEdgeOnly] = useState(false);
   const [selectedPieceIds, setSelectedPieceIds] = useState([]);
 
-  const [sheetIndex, setSheetIndex] = useState(0);
+  const [sheetIndex, setSheetIndex] = useState(1);
   const [dragPreview, setDragPreview] = useState(null);
   const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
 
@@ -129,21 +133,40 @@ export default function PuzzleScreen() {
   const activePieceSize = pieceSize(activePiece);
   const origin = frameOrigin(activePiece, boardLayout);
 
-  const trayCellSize = (width - 48) / TRAY_COLS;
-  const trayPieceSize = trayCellSize / (1 + TAB_RATIO * 2);
+  // Tepsideki parçalar, board'daki parçalarla AYNI boyutta olmalı — ikisi de
+  // aynı pieceSize() fonksiyonunu (piece.cols'a göre ölçeklenen) kullanıyor.
+  // Eskiden tepsi kendi bağımsız (yalnızca ekran genişliğine bağlı, puzzle'ın
+  // gerçek satır/sütun sayısından habersiz) bir boyut hesabı kullanıyordu; bu
+  // da örn. 6x6'lık bir puzzle'da board parçaları küçülürken tepsi
+  // parçalarının aynı kalıp çok daha büyük görünmesine sebep oluyordu.
+  const trayPieceSize = activePieceSize;
   const trayVisualSize = visualSize(trayPieceSize);
 
-  const snapPoints = useMemo(() => {
-  const one = 72 + trayVisualSize + 8;
-  const two = 72 + trayVisualSize * 2 + 18;
-  const full = width < BREAKPOINT_COMPACT ? height * 0.54 : height * 0.72;
+  // Bu boyuttaki parçalardan bir satıra kaç tanesinin sığacağı: grid'in
+  // yatay iç boşluğu (TRAY_GRID_H_PADDING) ve her parçanın etrafındaki
+  // boşluk (TRAY_ITEM_GAP) düşülerek hesaplanıyor.
+  const trayCols = Math.max(
+    1,
+    Math.floor(
+      (width - TRAY_GRID_H_PADDING * 2) / (trayVisualSize + TRAY_ITEM_GAP * 2)
+    )
+  );
 
-  return [
-    Math.min(one, height * 0.36),
-    Math.min(two, height * 0.46),
-    full,
-  ];
-}, [trayVisualSize]);
+  // 4 sabit konum: [0]=nub (sadece tutamaç, parçalar/başlık gizli),
+  // [1]=varsayılan (ilk açılış ve "topla" hareketinin hedefi), [2]=iki sıra,
+  // [3]=tam ekran (üst bardaki puan yazısının hemen altına kadar, seçim modu).
+  const snapPoints = useMemo(() => {
+    const one = 72 + trayVisualSize + 8;
+    const two = 72 + trayVisualSize * 2 + 18;
+    const full = height - TOP_BAR_HEIGHT - SHEET_TOP_GAP;
+
+    return [
+      SHEET_MIN_HEIGHT,
+      Math.min(one, height * 0.36),
+      Math.min(two, height * 0.46),
+      full,
+    ];
+  }, [trayVisualSize]);
 
   const visiblePieces = useMemo(() => {
     if (edgeOnly) return pieces.filter((p) => p.isEdge);
@@ -353,7 +376,7 @@ export default function PuzzleScreen() {
     setSelectedPieceIds([]);
     setEdgeOnly(false);
     setHintOn(false);
-    setSheetIndex(0);
+    setSheetIndex(1);
     setDragPreview(null);
     setIsTrayPieceDragging(false);
     setCompletionOpen(false);
@@ -368,7 +391,7 @@ export default function PuzzleScreen() {
     resetBoardCamera();
 
     requestAnimationFrame(() => {
-      sheetRef.current?.snapToIndex(0);
+      sheetRef.current?.snapToIndex(1);
     });
   }, [dragPreviewPan, resetBoardCamera]);
 
@@ -872,11 +895,13 @@ const custom = {
   );
 
   // "Aşağı" (tepsiyi küçült) ve "Sürükle" (seçim modundan çık) butonlarının
-  // ikisi de aynı işlemi yapıyor: seçimi temizle, sheet'i en alta indir.
+  // ikisi de aynı işlemi yapıyor: seçimi temizle, sheet'i varsayılan (1.
+  // konum) yüksekliğe indir. En dipteki nub (0. konum) sadece elle aşağı
+  // sürüklenerek ulaşılan, bu butonların hedeflemediği bir ekstra konum.
   const collapseTray = useCallback(() => {
     setSelectedPieceIds([]);
-    setSheetIndex(0);
-    sheetRef.current?.snapToIndex(0);
+    setSheetIndex(1);
+    sheetRef.current?.snapToIndex(1);
   }, []);
 
   const renderTrayPiece = useCallback(
@@ -1212,7 +1237,7 @@ const custom = {
               modunda (liste kaydırılırken) açık — bu native yarışı çözüyor. */}
           <BottomSheet
   ref={sheetRef}
-  index={0}
+  index={1}
   snapPoints={snapPoints}
   onChange={setSheetIndex}
   animatedPosition={sheetTopY}
@@ -1237,7 +1262,7 @@ const custom = {
               </View>
 
               <View style={styles.trayActionRow}>
-  {sheetIndex > 0 && (
+  {sheetIndex > 1 && (
     <TouchableOpacity style={styles.modeBtn} onPress={collapseTray}>
       <Text style={styles.modeBtnText}>Aşağı</Text>
     </TouchableOpacity>
@@ -1263,10 +1288,11 @@ const custom = {
             </View>
 
             <BottomSheetFlatList
+              key={`tray-${trayCols}`}
               data={visiblePieces}
               keyExtractor={(item) => item.id}
               renderItem={renderTrayPiece}
-              numColumns={TRAY_COLS}
+              numColumns={trayCols}
               scrollEnabled={isSelectionMode}
               removeClippedSubviews={Platform.OS === 'android'}
               initialNumToRender={24}
