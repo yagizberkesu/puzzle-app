@@ -28,12 +28,11 @@ import {
   SHEET_MIN_HEIGHT,
   SHEET_TOP_GAP,
   STORAGE_KEY,
-  TAB_RATIO,
   TOP_BAR_HEIGHT,
   TRAY_GRID_H_PADDING,
   TRAY_ITEM_GAP,
 } from '../constants/puzzle';
-import { TRAY_COLS, height, width } from '../constants/layout';
+import { height, width } from '../constants/layout';
 import {
   center,
   clamp,
@@ -134,15 +133,24 @@ export default function PuzzleScreen() {
   const activePieceSize = pieceSize(activePiece);
   const origin = frameOrigin(activePiece, boardLayout);
 
-  // Tepsi grid'inin bir satırında TRAY_COLS parça sığması için gereken hücre
-  // boyutu: grid'in yatay iç boşluğu (TRAY_GRID_H_PADDING) ve her parçanın
-  // etrafındaki boşluk (TRAY_ITEM_GAP) düşülerek hesaplanıyor. Bunlar hesaba
-  // katılmadan (eski hâl) parçalar satıra sığmayacak kadar büyük hesaplanıp
-  // grid'in taşmasına/yanlış boyut görünmesine sebep oluyordu.
-  const trayCellSize =
-    (width - TRAY_GRID_H_PADDING * 2 - TRAY_COLS * TRAY_ITEM_GAP * 2) / TRAY_COLS;
-  const trayPieceSize = trayCellSize / (1 + TAB_RATIO * 2);
+  // Tepsideki parçalar, board'daki parçalarla AYNI boyutta olmalı — ikisi de
+  // aynı pieceSize() fonksiyonunu (piece.cols'a göre ölçeklenen) kullanıyor.
+  // Eskiden tepsi kendi bağımsız (yalnızca ekran genişliğine bağlı, puzzle'ın
+  // gerçek satır/sütun sayısından habersiz) bir boyut hesabı kullanıyordu; bu
+  // da örn. 6x6'lık bir puzzle'da board parçaları küçülürken tepsi
+  // parçalarının aynı kalıp çok daha büyük görünmesine sebep oluyordu.
+  const trayPieceSize = activePieceSize;
   const trayVisualSize = visualSize(trayPieceSize);
+
+  // Bu boyuttaki parçalardan bir satıra kaç tanesinin sığacağı: grid'in
+  // yatay iç boşluğu (TRAY_GRID_H_PADDING) ve her parçanın etrafındaki
+  // boşluk (TRAY_ITEM_GAP) düşülerek hesaplanıyor.
+  const trayCols = Math.max(
+    1,
+    Math.floor(
+      (width - TRAY_GRID_H_PADDING * 2) / (trayVisualSize + TRAY_ITEM_GAP * 2)
+    )
+  );
 
   // 4 sabit konum: [0]=nub (sadece tutamaç, parçalar/başlık gizli),
   // [1]=varsayılan (ilk açılış ve "topla" hareketinin hedefi), [2]=iki sıra,
@@ -1280,10 +1288,11 @@ const custom = {
             </View>
 
             <BottomSheetFlatList
+              key={`tray-${trayCols}`}
               data={visiblePieces}
               keyExtractor={(item) => item.id}
               renderItem={renderTrayPiece}
-              numColumns={TRAY_COLS}
+              numColumns={trayCols}
               scrollEnabled={isSelectionMode}
               removeClippedSubviews={Platform.OS === 'android'}
               initialNumToRender={24}
