@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
+import { useSharedValue } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -58,6 +59,11 @@ export default function PuzzleScreen() {
   const sheetRef = useRef(null);
   const boardRef = useRef(null);
   const containerRef = useRef(null);
+
+  // Sheet'in gerçek anlık ekran Y konumu (üst kenarı, tepeden piksel).
+  // BottomSheet'e animatedPosition olarak veriliyor; sabit snapPoints
+  // tahmini yerine parça bırakma bölgesini doğru hesaplamak için kullanılır.
+  const sheetTopY = useSharedValue(height);
 
   const screenOffsetRef = useRef({ x: 0, y: 0 });
   const dragPreviewRef = useRef(null);
@@ -744,12 +750,7 @@ export default function PuzzleScreen() {
       setDragPreview(null);
       setIsTrayPieceDragging(false);
 
-      const sheetHeight =
-        typeof snapPoints[sheetIndex] === 'number'
-          ? snapPoints[sheetIndex]
-          : height * 0.2;
-
-      if (final.y + final.visualSize / 2 >= height - sheetHeight) {
+      if (final.y + final.visualSize / 2 >= sheetTopY.value) {
         return;
       }
 
@@ -793,7 +794,7 @@ const custom = {
       setPieces((prev) => prev.filter((p) => p.id !== piece.id));
       setSelectedPieceIds((prev) => prev.filter((id) => id !== piece.id));
     },
-    [boardLayout, boardWindowLayout, origin, sheetIndex, snapPoints, snapToFrame]
+    [boardLayout, boardWindowLayout, origin, sheetTopY, snapToFrame]
   );
 
   const clearLooseSinglePieces = useCallback(() => {
@@ -1214,6 +1215,7 @@ const custom = {
   index={0}
   snapPoints={snapPoints}
   onChange={setSheetIndex}
+  animatedPosition={sheetTopY}
   enableContentPanningGesture={isSelectionMode}
   enableHandlePanningGesture={!isTrayPieceDragging}
             style={styles.sheetLayer}
