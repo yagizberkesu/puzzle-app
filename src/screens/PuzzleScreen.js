@@ -27,7 +27,7 @@ import {
   STORAGE_KEY,
   TAB_RATIO,
 } from '../constants/puzzle';
-import { TRAY_COLS, height, width } from '../constants/layout';
+import { BREAKPOINT_COMPACT, TRAY_COLS, height, width } from '../constants/layout';
 import {
   center,
   clamp,
@@ -130,7 +130,7 @@ export default function PuzzleScreen() {
   const snapPoints = useMemo(() => {
   const one = 72 + trayVisualSize + 8;
   const two = 72 + trayVisualSize * 2 + 18;
-  const full = width < 700 ? height * 0.54 : height * 0.72;
+  const full = width < BREAKPOINT_COMPACT ? height * 0.54 : height * 0.72;
 
   return [
     Math.min(one, height * 0.36),
