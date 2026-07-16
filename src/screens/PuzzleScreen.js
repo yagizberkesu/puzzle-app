@@ -868,17 +868,13 @@ const custom = {
     [snapToFrame]
   );
 
-  const exitSelectionMode = useCallback(() => {
+  // "Aşağı" (tepsiyi küçült) ve "Sürükle" (seçim modundan çık) butonlarının
+  // ikisi de aynı işlemi yapıyor: seçimi temizle, sheet'i en alta indir.
+  const collapseTray = useCallback(() => {
     setSelectedPieceIds([]);
     setSheetIndex(0);
     sheetRef.current?.snapToIndex(0);
   }, []);
-
-  const collapseTray = useCallback(() => {
-  setSelectedPieceIds([]);
-  setSheetIndex(0);
-  sheetRef.current?.snapToIndex(0);
-}, []);
 
   const renderTrayPiece = useCallback(
     ({ item }) => (
@@ -1244,7 +1240,7 @@ const custom = {
   )}
 
   {isSelectionMode && (
-    <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
+    <TouchableOpacity style={styles.modeBtn} onPress={collapseTray}>
       <Text style={styles.modeBtnText}>Sürükle</Text>
     </TouchableOpacity>
   )}
