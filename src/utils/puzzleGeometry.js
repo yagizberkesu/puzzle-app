@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { width } from '../constants/layout';
+import { BREAKPOINT_TABLET, width } from '../constants/layout';
 import { BOARD_PADDING, TAB_RATIO } from '../constants/puzzle';
 
 export function clamp(v, min, max) {
@@ -20,7 +20,7 @@ export function center(touches) {
 
 export function pieceSize(piece) {
   const cols = piece?.cols || 4;
-  const maxSize = width > 900 ? 72 : Platform.OS === 'android' ? 48 : 54;
+  const maxSize = width > BREAKPOINT_TABLET ? 72 : Platform.OS === 'android' ? 48 : 54;
   const availableWidth = width - 92;
 
   return Math.min(maxSize, availableWidth / cols);

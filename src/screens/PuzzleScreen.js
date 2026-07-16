@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
+import { useSharedValue } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -27,7 +28,7 @@ import {
   STORAGE_KEY,
   TAB_RATIO,
 } from '../constants/puzzle';
-import { TRAY_COLS, height, width } from '../constants/layout';
+import { BREAKPOINT_COMPACT, TRAY_COLS, height, width } from '../constants/layout';
 import {
   center,
   clamp,
@@ -58,6 +59,11 @@ export default function PuzzleScreen() {
   const sheetRef = useRef(null);
   const boardRef = useRef(null);
   const containerRef = useRef(null);
+
+  // Sheet'in gerçek anlık ekran Y konumu (üst kenarı, tepeden piksel).
+  // BottomSheet'e animatedPosition olarak veriliyor; sabit snapPoints
+  // tahmini yerine parça bırakma bölgesini doğru hesaplamak için kullanılır.
+  const sheetTopY = useSharedValue(height);
 
   const screenOffsetRef = useRef({ x: 0, y: 0 });
   const dragPreviewRef = useRef(null);
@@ -130,7 +136,7 @@ export default function PuzzleScreen() {
   const snapPoints = useMemo(() => {
   const one = 72 + trayVisualSize + 8;
   const two = 72 + trayVisualSize * 2 + 18;
-  const full = width < 700 ? height * 0.54 : height * 0.72;
+  const full = width < BREAKPOINT_COMPACT ? height * 0.54 : height * 0.72;
 
   return [
     Math.min(one, height * 0.36),
@@ -207,7 +213,7 @@ export default function PuzzleScreen() {
         }
       })
       .catch((e) => {
-        console.log('Puzzle storage load error:', e);
+        if (__DEV__) console.log('Puzzle storage load error:', e);
       })
       .finally(() => {
         if (mounted) setHomeLoading(false);
@@ -222,7 +228,7 @@ export default function PuzzleScreen() {
     setSavedPuzzles(next);
 
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((e) => {
-      console.log('Puzzle storage save error:', e);
+      if (__DEV__) console.log('Puzzle storage save error:', e);
     });
   }, []);
 
@@ -231,7 +237,7 @@ export default function PuzzleScreen() {
       const next = prev.map((r) => (r.id === id ? updater(r) : r));
 
       AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((e) => {
-        console.log('Puzzle storage save error:', e);
+        if (__DEV__) console.log('Puzzle storage save error:', e);
       });
 
       return next;
@@ -338,6 +344,33 @@ export default function PuzzleScreen() {
       y: 0,
     });
   }, [boardPan, boardScale]);
+
+  // selectDifficulty ve openSavedPuzzle'ın ortak "puzzle ekranına gir + oyun
+  // durumunu sıfırla" adımları. completionShownRef her girişte sıfırlanır ki
+  // zaten tamamlanmış bir puzzle tekrar açıldığında tebrik modalı bir daha
+  // gösterilebilsin.
+  const enterPuzzleView = useCallback(() => {
+    setSelectedPieceIds([]);
+    setEdgeOnly(false);
+    setHintOn(false);
+    setSheetIndex(0);
+    setDragPreview(null);
+    setIsTrayPieceDragging(false);
+    setCompletionOpen(false);
+
+    completionShownRef.current = false;
+
+    setScreenMode('puzzle');
+
+    dragPreviewRef.current = null;
+    dragPreviewPan.setValue({ x: 0, y: 0 });
+
+    resetBoardCamera();
+
+    requestAnimationFrame(() => {
+      sheetRef.current?.snapToIndex(0);
+    });
+  }, [dragPreviewPan, resetBoardCamera]);
 
   const boardPanResponder = useMemo(
     () =>
@@ -477,7 +510,7 @@ export default function PuzzleScreen() {
 
       createPuzzleCard(img.uri, 'Galeriden Puzzle');
     } catch (e) {
-      console.log('Gallery pick error:', e);
+      if (__DEV__) console.log('Gallery pick error:', e);
 
       Alert.alert(
         'Görsel seçilemedi',
@@ -496,38 +529,21 @@ export default function PuzzleScreen() {
       setActivePuzzleId(record.id);
       setSourceImage(record.imageUri);
 
+      // Boş bir tepsi (record.pieces = []) geçerli bir durumdur: tüm parçalar
+      // zaten board'a gönderilmiş demektir (tamamlanmış her puzzle'da böyle).
+      // Bunu eksik veriyle karıştırıp yeni bir parça seti üretmek, toplam
+      // parça sayısını ikiye katlayıp ilerlemeyi bozuyordu.
       setPieces(
-        Array.isArray(record.pieces) && record.pieces.length
+        Array.isArray(record.pieces)
           ? record.pieces
           : createPieces(record.imageUri, record.totalPieces)
       );
 
       setBoardGroups(Array.isArray(record.boardGroups) ? record.boardGroups : []);
-      setSelectedPieceIds([]);
-      setEdgeOnly(false);
-      setHintOn(false);
-      setSheetIndex(0);
-      setDragPreview(null);
-      setIsTrayPieceDragging(false);
-      setCompletionOpen(false);
 
-      completionShownRef.current = Boolean(record.completed);
-
-      setScreenMode('puzzle');
-
-      dragPreviewRef.current = null;
-      dragPreviewPan.setValue({
-        x: 0,
-        y: 0,
-      });
-
-      resetBoardCamera();
-
-      requestAnimationFrame(() => {
-        sheetRef.current?.snapToIndex(0);
-      });
+      enterPuzzleView();
     },
-    [dragPreviewPan, queueDifficulty, resetBoardCamera]
+    [enterPuzzleView, queueDifficulty]
   );
 
   const deletePuzzle = useCallback(
@@ -608,40 +624,18 @@ export default function PuzzleScreen() {
       setSourceImage(pendingUri);
       setPieces(nextPieces);
       setBoardGroups([]);
-      setSelectedPieceIds([]);
       setDifficultyOpen(false);
       setPendingUri(null);
       setPendingPuzzleId(null);
-      setEdgeOnly(false);
-      setHintOn(false);
-      setSheetIndex(0);
-      setDragPreview(null);
-      setIsTrayPieceDragging(false);
-      setCompletionOpen(false);
 
-      completionShownRef.current = false;
-
-      setScreenMode('puzzle');
-
-      dragPreviewRef.current = null;
-      dragPreviewPan.setValue({
-        x: 0,
-        y: 0,
-      });
-
-      resetBoardCamera();
-
-      requestAnimationFrame(() => {
-        sheetRef.current?.snapToIndex(0);
-      });
+      enterPuzzleView();
     },
     [
-      dragPreviewPan,
+      enterPuzzleView,
       pendingPuzzleId,
       pendingPuzzleTitle,
       pendingUri,
       persistPuzzles,
-      resetBoardCamera,
       savedPuzzles,
       updatePuzzleRecord,
     ]
@@ -756,12 +750,7 @@ export default function PuzzleScreen() {
       setDragPreview(null);
       setIsTrayPieceDragging(false);
 
-      const sheetHeight =
-        typeof snapPoints[sheetIndex] === 'number'
-          ? snapPoints[sheetIndex]
-          : height * 0.2;
-
-      if (final.y + final.visualSize / 2 >= height - sheetHeight) {
+      if (final.y + final.visualSize / 2 >= sheetTopY.value) {
         return;
       }
 
@@ -805,7 +794,7 @@ const custom = {
       setPieces((prev) => prev.filter((p) => p.id !== piece.id));
       setSelectedPieceIds((prev) => prev.filter((id) => id !== piece.id));
     },
-    [boardLayout, boardWindowLayout, origin, sheetIndex, snapPoints, snapToFrame]
+    [boardLayout, boardWindowLayout, origin, sheetTopY, snapToFrame]
   );
 
   const clearLooseSinglePieces = useCallback(() => {
@@ -882,17 +871,13 @@ const custom = {
     [snapToFrame]
   );
 
-  const exitSelectionMode = useCallback(() => {
+  // "Aşağı" (tepsiyi küçült) ve "Sürükle" (seçim modundan çık) butonlarının
+  // ikisi de aynı işlemi yapıyor: seçimi temizle, sheet'i en alta indir.
+  const collapseTray = useCallback(() => {
     setSelectedPieceIds([]);
     setSheetIndex(0);
     sheetRef.current?.snapToIndex(0);
   }, []);
-
-  const collapseTray = useCallback(() => {
-  setSelectedPieceIds([]);
-  setSheetIndex(0);
-  sheetRef.current?.snapToIndex(0);
-}, []);
 
   const renderTrayPiece = useCallback(
     ({ item }) => (
@@ -1230,6 +1215,7 @@ const custom = {
   index={0}
   snapPoints={snapPoints}
   onChange={setSheetIndex}
+  animatedPosition={sheetTopY}
   enableContentPanningGesture={isSelectionMode}
   enableHandlePanningGesture={!isTrayPieceDragging}
             style={styles.sheetLayer}
@@ -1258,7 +1244,7 @@ const custom = {
   )}
 
   {isSelectionMode && (
-    <TouchableOpacity style={styles.modeBtn} onPress={exitSelectionMode}>
+    <TouchableOpacity style={styles.modeBtn} onPress={collapseTray}>
       <Text style={styles.modeBtnText}>Sürükle</Text>
     </TouchableOpacity>
   )}
@@ -1301,7 +1287,7 @@ const custom = {
                   disabled={visiblePieces.length === 0}
                   onPress={sendPiecesToBoard}
                 >
-                  <Text style={styles.traySendWideText}>Send ({selectedCount})</Text>
+                  <Text style={styles.traySendWideText}>Gönder ({selectedCount})</Text>
                 </TouchableOpacity>
               </View>
             )}

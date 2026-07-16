@@ -43,12 +43,14 @@ const DraggableGroup = React.memo(function DraggableGroup({
           });
         },
 
-        onPanResponderRelease: () => {
+        onPanResponderRelease: (_e, g) => {
           if (group.anchoredToFrame) return;
 
+          const scale = Math.max(0.35, getBoardScale?.() || 1);
+
           const next = onMoveEnd(group.id, {
-            x: pan.x._value,
-            y: pan.y._value,
+            x: group.x + g.dx / scale,
+            y: group.y + g.dy / scale,
           });
 
           if (next) {

@@ -1,5 +1,5 @@
 import { adjacent, clamp, pieceSize, solvedPosition, visualSize } from './puzzleGeometry';
-import { width } from '../constants/layout';
+import { BREAKPOINT_COMPACT, width } from '../constants/layout';
 import { BOARD_PADDING, FRAME_SNAP, GROUP_SNAP } from '../constants/puzzle';
 
 export function groupPieceCount(groups) {
@@ -17,7 +17,7 @@ export function createGroup(piece, index, origin, boardLayout, custom) {
   const vs = visualSize(size);
   const frameHeight = size * piece.rows;
 
-  const columns = width < 700 ? 3 : 4;
+  const columns = width < BREAKPOINT_COMPACT ? 3 : 4;
 const defaultX = origin.x + (index % columns) * (vs + 10);
 const defaultY =
   origin.y + frameHeight + 28 + Math.floor(index / columns) * (vs + 10);

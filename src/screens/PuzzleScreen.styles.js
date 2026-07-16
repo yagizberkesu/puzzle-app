@@ -1,6 +1,6 @@
 import { Platform, StyleSheet } from 'react-native';
 import { THEME } from '../constants/theme';
-import { width } from '../constants/layout';
+import { BREAKPOINT_COMPACT, width } from '../constants/layout';
 
 const styles = StyleSheet.create({
 
@@ -261,7 +261,7 @@ topBarSideLeft: {
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'flex-start',
-  gap: width > 700 ? 120 : 18,
+  gap: width > BREAKPOINT_COMPACT ? 120 : 18,
 },
 
 topBarSideRight: {
@@ -269,7 +269,7 @@ topBarSideRight: {
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'flex-end',
-  gap: width > 700 ? 120 : 18,
+  gap: width > BREAKPOINT_COMPACT ? 120 : 18,
 },
 
 topScoreAbsolute: {
