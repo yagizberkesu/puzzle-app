@@ -17,22 +17,27 @@ import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import { useSharedValue } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Haptics from 'expo-haptics';
+import { useAudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
   BOARD_PADDING,
   DIFFICULTIES,
+  DIFFICULTY_META,
   PRESETS,
   SELECT_MODE_INDEX,
   SEND_COUNT,
   SHEET_MIN_HEIGHT,
   SHEET_TOP_GAP,
+  SOUND_SETTING_KEY,
   STORAGE_KEY,
   TOP_BAR_HEIGHT,
   TRAY_GRID_H_PADDING,
   TRAY_ITEM_GAP,
 } from '../constants/puzzle';
 import { height, width } from '../constants/layout';
+import { THEME } from '../constants/theme';
 import {
   center,
   clamp,
@@ -57,6 +62,7 @@ import DraggableGroup from '../components/puzzle/DraggableGroup';
 import TrayPieceItem from '../components/puzzle/TrayPieceItem';
 import FloatingReference from '../components/puzzle/FloatingReference';
 import CompletionModal from '../components/puzzle/CompletionModal';
+import MergeSparkle from '../components/puzzle/MergeSparkle';
 import styles from './PuzzleScreen.styles';
 
 export default function PuzzleScreen() {
@@ -73,6 +79,12 @@ export default function PuzzleScreen() {
   const dragPreviewRef = useRef(null);
   const saveTimerRef = useRef(null);
   const completionShownRef = useRef(false);
+
+  // Parça birleşme/kilometre taşı geri bildirimi: ses efektleri ve
+  // "önceki çözülen parça sayısı" takibi (yeni eşikleri tespit etmek için).
+  const mergeSoundPlayer = useAudioPlayer(require('../../assets/sounds/piece-merge.wav'));
+  const milestoneSoundPlayer = useAudioPlayer(require('../../assets/sounds/milestone.mp3'));
+  const prevSolvedCountRef = useRef(0);
 
   const boardScaleRef = useRef(1);
   const boardPanRef = useRef({ x: 0, y: 0 });
@@ -92,6 +104,10 @@ export default function PuzzleScreen() {
   const [screenMode, setScreenMode] = useState('home');
   const [savedPuzzles, setSavedPuzzles] = useState([]);
   const [homeLoading, setHomeLoading] = useState(true);
+  // Parça birleşme/kilometre taşı sesi ve titreşimi aç-kapa — tercih
+  // AsyncStorage'da saklanıyor (bkz. aşağıdaki yükleme effect'i).
+  // Görsel pırıltı efekti bu ayardan bağımsız, her zaman gösteriliyor.
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [activePuzzleId, setActivePuzzleId] = useState(null);
   const [pendingPuzzleId, setPendingPuzzleId] = useState(null);
   const [pendingPuzzleTitle, setPendingPuzzleTitle] = useState('Yeni Puzzle');
@@ -112,6 +128,12 @@ export default function PuzzleScreen() {
   const [sheetIndex, setSheetIndex] = useState(1);
   const [dragPreview, setDragPreview] = useState(null);
   const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
+  // Board'un en son bıraktığı (2 parmak pinch bitince) zoom oranı — tepsi
+  // parça boyutunu buna göre büyütüp küçültmek için kullanılıyor.
+  const [trayZoomScale, setTrayZoomScale] = useState(1);
+  // Parça birleşince kısa süreliğine gösterilen pırıltı efektleri:
+  // {id, x, y} — board'daki birleşme noktasında belirip kendi kendine kalkar.
+  const [sparkles, setSparkles] = useState([]);
 
   const [boardLayout, setBoardLayout] = useState({
     x: 0,
@@ -139,7 +161,13 @@ export default function PuzzleScreen() {
   // gerçek satır/sütun sayısından habersiz) bir boyut hesabı kullanıyordu; bu
   // da örn. 6x6'lık bir puzzle'da board parçaları küçülürken tepsi
   // parçalarının aynı kalıp çok daha büyük görünmesine sebep oluyordu.
-  const trayPieceSize = activePieceSize;
+  //
+  // trayZoomScale, board'da 2 parmakla yakınlaştırma bitince (bkz.
+  // boardPanResponder) board'un o anki zoom oranına eşitleniyor; böylece
+  // tepsideki parça da board'daki parçayla aynı görsel büyüklükte kalıyor
+  // (özellikle yüksek parça sayılarında board zoom yapılmadan parçalar
+  // kullanılamayacak kadar küçük olur).
+  const trayPieceSize = activePieceSize * trayZoomScale;
   const trayVisualSize = visualSize(trayPieceSize);
 
   // Bu boyuttaki parçalardan bir satıra kaç tanesinin sığacağı: grid'in
@@ -245,6 +273,34 @@ export default function PuzzleScreen() {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    AsyncStorage.getItem(SOUND_SETTING_KEY)
+      .then((raw) => {
+        if (mounted && raw !== null) {
+          setSoundEnabled(raw === '1');
+        }
+      })
+      .catch((e) => {
+        if (__DEV__) console.log('Ses ayarı yükleme hatası:', e);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(SOUND_SETTING_KEY, next ? '1' : '0').catch((e) => {
+        if (__DEV__) console.log('Ses ayarı kaydetme hatası:', e);
+      });
+      return next;
+    });
   }, []);
 
   const persistPuzzles = useCallback((next) => {
@@ -366,6 +422,8 @@ export default function PuzzleScreen() {
       x: 0,
       y: 0,
     });
+
+    setTrayZoomScale(1);
   }, [boardPan, boardScale]);
 
   // selectDifficulty ve openSavedPuzzle'ın ortak "puzzle ekranına gir + oyun
@@ -444,6 +502,19 @@ export default function PuzzleScreen() {
 
           boardScale.setValue(nextScale);
           boardPan.setValue(nextPan);
+        },
+
+        // Pinch bitince (parmaklar kalkınca) tepsideki parça boyutunu
+        // board'un son zoom oranına eşitle. Her hareket karesinde değil,
+        // sadece jest bitince güncelliyoruz — aksi halde tepsi grid'i
+        // (sütun sayısı yeniden hesaplanıp remount olduğu için) pinch
+        // sırasında sürekli titreyip performansı bozar.
+        onPanResponderRelease: () => {
+          setTrayZoomScale(boardScaleRef.current);
+        },
+
+        onPanResponderTerminate: () => {
+          setTrayZoomScale(boardScaleRef.current);
         },
       }),
     [boardPan, boardScale]
@@ -562,7 +633,13 @@ export default function PuzzleScreen() {
           : createPieces(record.imageUri, record.totalPieces)
       );
 
-      setBoardGroups(Array.isArray(record.boardGroups) ? record.boardGroups : []);
+      const savedGroups = Array.isArray(record.boardGroups) ? record.boardGroups : [];
+      setBoardGroups(savedGroups);
+
+      // Milestone (10/50 parça) takibini kaydedilmiş ilerlemeden devam
+      // ettir — aksi halde puzzle açılır açılmaz sahte bir "eşik aşıldı"
+      // bildirimi (ses+titreşim) tetiklenir.
+      prevSolvedCountRef.current = solvedPieceCount(savedGroups);
 
       enterPuzzleView();
     },
@@ -647,6 +724,9 @@ export default function PuzzleScreen() {
       setSourceImage(pendingUri);
       setPieces(nextPieces);
       setBoardGroups([]);
+      // Yeni puzzle 0 çözülmüş parçayla başlar (bkz. openSavedPuzzle'daki
+      // aynı mantık — açılışta sahte bir milestone tetiklenmesin diye).
+      prevSolvedCountRef.current = 0;
       setDifficultyOpen(false);
       setPendingUri(null);
       setPendingPuzzleId(null);
@@ -675,7 +755,7 @@ export default function PuzzleScreen() {
 
   const snapToFrame = useCallback(
     (group) => {
-      const target = frameSnapTarget(group, origin);
+      const target = frameSnapTarget(group, origin, boardScaleRef.current);
 
       if (!target) return group;
 
@@ -688,6 +768,63 @@ export default function PuzzleScreen() {
     },
     [origin]
   );
+
+  // Parça birleşince (komşu parçayla ya da çerçevedeki doğru yerine oturunca)
+  // çağrılır: kısa bir pırıltı + ses. count>1 verilirse (10 parça kilometre
+  // taşı gibi) birden fazla pırıltı dağıtılır.
+  const triggerPieceMergeFeedback = useCallback(
+    (x, y, count = 1) => {
+      const newSparkles = Array.from({ length: count }, (_, i) => ({
+        id: `sparkle-${Date.now()}-${i}-${Math.random()}`,
+        x: x + (count > 1 ? (Math.random() - 0.5) * 60 : 0),
+        y: y + (count > 1 ? (Math.random() - 0.5) * 60 : 0),
+      }));
+
+      setSparkles((prev) => [...prev, ...newSparkles]);
+
+      setTimeout(() => {
+        const ids = new Set(newSparkles.map((s) => s.id));
+        setSparkles((prev) => prev.filter((s) => !ids.has(s.id)));
+      }, 600);
+
+      if (soundEnabled) {
+        mergeSoundPlayer.seekTo(0);
+        mergeSoundPlayer.play();
+      }
+    },
+    [mergeSoundPlayer, soundEnabled]
+  );
+
+  // Çözülen parça sayısı eşikleri: her 10 parçada büyük bir pırıltı
+  // patlaması, her 50 parçada titreşim + daha "süslü" bir milestone sesi.
+  useEffect(() => {
+    const prev = prevSolvedCountRef.current;
+    const next = currentSolvedCount;
+    prevSolvedCountRef.current = next;
+
+    if (next <= prev || totalPieces === 0) return;
+
+    const centerX = (boardLayout?.width || width) / 2;
+    const centerY = (boardLayout?.height || 600) / 2;
+
+    if (Math.floor(next / 50) > Math.floor(prev / 50)) {
+      if (soundEnabled) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        milestoneSoundPlayer.seekTo(0);
+        milestoneSoundPlayer.play();
+      }
+      triggerPieceMergeFeedback(centerX, centerY, 6);
+    } else if (Math.floor(next / 10) > Math.floor(prev / 10)) {
+      triggerPieceMergeFeedback(centerX, centerY, 3);
+    }
+  }, [
+    boardLayout,
+    currentSolvedCount,
+    milestoneSoundPlayer,
+    soundEnabled,
+    totalPieces,
+    triggerPieceMergeFeedback,
+  ]);
 
   const sendPiecesToBoard = useCallback(() => {
     const selected = selectedPieceIds.length
@@ -852,6 +989,10 @@ const custom = {
   const onGroupMoveEnd = useCallback(
     (id, pos) => {
       let returned = pos;
+      // setBoardGroups'un updater'ı (StrictMode'da) birden fazla kez
+      // çağrılabildiği için ses/pırıltı gibi yan etkileri updater'ın İÇİNDE
+      // değil, burada (dışarıda, senkron olarak bir kez) tetikliyoruz.
+      let mergedAt = null;
 
       setBoardGroups((prev) => {
         const dragged = prev.find((g) => g.id === id);
@@ -864,7 +1005,7 @@ const custom = {
         };
 
         const others = prev.filter((g) => g.id !== id);
-        const snap = groupSnapTarget(moved, others);
+        const snap = groupSnapTarget(moved, others, boardScaleRef.current);
 
         if (snap) {
           const merged = snapToFrame(
@@ -876,6 +1017,8 @@ const custom = {
             y: merged.y,
           };
 
+          mergedAt = { x: merged.x, y: merged.y };
+
           return [...others.filter((g) => g.id !== snap.other.id), merged];
         }
 
@@ -886,12 +1029,20 @@ const custom = {
           y: final.y,
         };
 
+        if (final.anchoredToFrame && !moved.anchoredToFrame) {
+          mergedAt = { x: final.x, y: final.y };
+        }
+
         return prev.map((g) => (g.id === id ? final : g));
       });
 
+      if (mergedAt) {
+        triggerPieceMergeFeedback(mergedAt.x, mergedAt.y);
+      }
+
       return returned;
     },
-    [snapToFrame]
+    [snapToFrame, triggerPieceMergeFeedback]
   );
 
   // "Aşağı" (tepsiyi küçült) ve "Sürükle" (seçim modundan çık) butonlarının
@@ -944,6 +1095,17 @@ const custom = {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.homeHero}>
+            <TouchableOpacity
+              style={styles.homeSoundToggle}
+              activeOpacity={0.7}
+              onPress={toggleSound}
+              hitSlop={10}
+            >
+              <Text style={styles.homeSoundToggleText}>
+                {soundEnabled ? '🔊' : '🔇'}
+              </Text>
+            </TouchableOpacity>
+
             <Text style={styles.homeEyebrow}>PUZZLE STUDIO</Text>
             <Text style={styles.homeTitle}>Puzzle'larım</Text>
 
@@ -1213,6 +1375,10 @@ const custom = {
                   getBoardScale={getBoardScale}
                 />
               ))}
+
+              {sparkles.map((s, i) => (
+                <MergeSparkle key={s.id} x={s.x} y={s.y} emojiIndex={i} />
+              ))}
             </Animated.View>
 
             {sourceImage && (
@@ -1366,15 +1532,32 @@ const custom = {
             <Text style={styles.modalSubtitle}>{pendingPuzzleTitle}</Text>
 
             <View style={styles.difficultyRow}>
-              {DIFFICULTIES.map((n) => (
-                <TouchableOpacity
-                  key={n}
-                  style={styles.diffBtn}
-                  onPress={() => selectDifficulty(n)}
-                >
-                  <Text style={styles.diffBtnText}>{n}</Text>
-                </TouchableOpacity>
-              ))}
+              {DIFFICULTIES.map((n) => {
+                const meta = DIFFICULTY_META[n] || {
+                  label: '',
+                  color: THEME.purple,
+                  grid: Math.round(Math.sqrt(n)),
+                };
+
+                return (
+                  <TouchableOpacity
+                    key={n}
+                    style={[styles.diffCard, { borderColor: meta.color }]}
+                    onPress={() => selectDifficulty(n)}
+                  >
+                    <View
+                      style={[styles.diffCardAccent, { backgroundColor: meta.color }]}
+                    />
+                    <Text style={[styles.diffCardLabel, { color: meta.color }]}>
+                      {meta.label}
+                    </Text>
+                    <Text style={styles.diffCardNumber}>{n}</Text>
+                    <Text style={styles.diffCardGrid}>
+                      {meta.grid}×{meta.grid}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </Pressable>
         </Pressable>

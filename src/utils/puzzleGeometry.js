@@ -34,6 +34,18 @@ export function visualSize(size) {
   return size + overhang(size) * 2;
 }
 
+// Yüksek parça sayılarında (örn. 1024 parça) parçalar zoom yapılmadan
+// dokunma için çok küçük kalabiliyor (~9-13px). Erişilebilirlik standart
+// minimum dokunma hedefine (44px) tamamlayacak kadar hitSlop döndürür —
+// görsel boyutu değiştirmez, sadece dokunma alanını genişletir.
+const MIN_TOUCH_TARGET = 44;
+
+export function minTouchHitSlop(widthPx, heightPx = widthPx) {
+  const extraX = Math.max(0, (MIN_TOUCH_TARGET - widthPx) / 2);
+  const extraY = Math.max(0, (MIN_TOUCH_TARGET - heightPx) / 2);
+  return { top: extraY, bottom: extraY, left: extraX, right: extraX };
+}
+
 export function frameOrigin(piece, layout) {
   if (!piece) return { x: BOARD_PADDING, y: BOARD_PADDING };
 

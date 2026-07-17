@@ -1,13 +1,37 @@
 export const STORAGE_KEY = 'PUZZLE_APP_SAVED_PUZZLES_V2';
+export const SOUND_SETTING_KEY = 'PUZZLE_APP_SOUND_ENABLED_V1';
 export const SELECT_MODE_INDEX = 3;
 export const SEND_COUNT = 20;
 export const BOARD_PADDING = 16;
 // Draradech jigsaw formülünün (bkz. puzzleGeometry.js TAB_T) varsayılan tab
 // derinliği (3*0.1=%30) tuvalin dışına taşmasın diye 0.2'den büyütüldü.
 export const TAB_RATIO = 0.34;
-export const FRAME_SNAP = 0.85;
-export const GROUP_SNAP = 0.42;
-export const DIFFICULTIES = [36, 64, 100, 144, 196, 256];
+// Bir Unity yapboz referansına (dist < tile_boyutu*0.2) yakın, parçanın
+// gerçekten yakınında olunca birleşmesi için küçültüldü — eskiden 0.85/0.42
+// idi ve parçalar çok uzaktan bile birleşebiliyordu.
+export const FRAME_SNAP = 0.38;
+export const GROUP_SNAP = 0.22;
+// Board yakınlaştırma seviyesinden bağımsız, ekran pikseli cinsinden sabit
+// bir parmak-hassasiyeti payı (bkz. puzzleGroups.js). Çok küçük parçalarda
+// (yüksek parça sayısı) mantıksal birim cinsinden sabit bir taban kullanmak
+// parçanın kat kat üzerinde bir mesafeden birleşmeye sebep oluyordu.
+export const MIN_SNAP_SCREEN_PX = 10;
+// Hepsi tam kare (5²..32²) — createPieces'teki Math.round(Math.sqrt(n))
+// hesabıyla kusursuz NxN grid üretir, yuvarlama hatası olmaz.
+export const DIFFICULTIES = [25, 100, 225, 400, 625, 784, 900, 1024];
+
+// Zorluk seçim ekranında her seçeneğin hangi kategoriye/renge ait olduğu.
+// grid, kullanıcıya somut bir fikir vermesi için NxN olarak gösteriliyor.
+export const DIFFICULTY_META = {
+  25: { label: 'Kolay', color: '#4caf7d', grid: 5 },
+  100: { label: 'Kolay', color: '#4caf7d', grid: 10 },
+  225: { label: 'Orta', color: '#4a7fd6', grid: 15 },
+  400: { label: 'Orta', color: '#4a7fd6', grid: 20 },
+  625: { label: 'Zor', color: '#c47b18', grid: 25 },
+  784: { label: 'Zor', color: '#c47b18', grid: 28 },
+  900: { label: 'Uzman', color: '#d1495b', grid: 30 },
+  1024: { label: 'Uzman', color: '#d1495b', grid: 32 },
+};
 
 // Üst bar yüksekliği (PuzzleScreen.styles.js: gameTopBar.height) — tepsi tam
 // açıldığında bunun hemen altında kalması için sheet yükseklik hesabında da

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { PanResponder, Text, TouchableOpacity, View } from 'react-native';
 import PieceImage from './PieceImage';
+import { minTouchHitSlop } from '../../utils/puzzleGeometry';
 import { THEME } from '../../constants/theme';
 import styles from '../../screens/PuzzleScreen.styles';
 
@@ -69,11 +70,14 @@ const TrayPieceItem = React.memo(function TrayPieceItem({
     [isSelectionMode, item, onDragToBoard, onDragStart, onDragMove, onDragEnd]
   );
 
+  const hitSlop = useMemo(() => minTouchHitSlop(trayVisualSize), [trayVisualSize]);
+
   if (isSelectionMode) {
     return (
       <TouchableOpacity
         activeOpacity={0.85}
         onPress={() => onToggleSelect(item.id)}
+        hitSlop={hitSlop}
         style={[
           styles.trayPiece,
           {
@@ -101,6 +105,7 @@ const TrayPieceItem = React.memo(function TrayPieceItem({
   return (
     <View
       {...responder.panHandlers}
+      hitSlop={hitSlop}
       style={[
         styles.trayPiece,
         styles.dragTrayPiece,

@@ -42,6 +42,18 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
+  homeSoundToggle: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 1,
+    padding: 4,
+  },
+
+  homeSoundToggleText: {
+    fontSize: 20,
+  },
+
   homeEyebrow: {
     color: THEME.purple,
     fontSize: 12,
@@ -702,19 +714,44 @@ topScoreAbsolute: {
     justifyContent: 'space-between',
   },
 
-  diffBtn: {
+  diffCard: {
     width: '48%',
-    backgroundColor: THEME.purple,
-    paddingVertical: 14,
-    borderRadius: 10,
+    backgroundColor: THEME.bg,
+    borderRadius: 12,
+    borderWidth: 1.5,
     marginBottom: 10,
     alignItems: 'center',
+    paddingTop: 14,
+    paddingBottom: 12,
+    overflow: 'hidden',
   },
 
-  diffBtnText: {
-    color: THEME.white,
+  diffCardAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+  },
+
+  diffCardLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+
+  diffCardNumber: {
+    color: THEME.text,
     fontWeight: '900',
-    fontSize: 18,
+    fontSize: 22,
+  },
+
+  diffCardGrid: {
+    color: THEME.muted,
+    fontSize: 12,
+    marginTop: 2,
   },
 
   completionOverlay: {

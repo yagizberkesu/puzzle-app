@@ -29,6 +29,9 @@
         "projectId": "cd5f4d1c-4bde-4456-bba4-addf0deb807e"
       }
     },
-    "owner": "brksus-team"
+    "owner": "brksus-team",
+    "plugins": [
+      "expo-audio"
+    ]
   }
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, PanResponder, View } from 'react-native';
 import { groupBounds } from '../../utils/puzzleGroups';
-import { pieceSize, visualSize } from '../../utils/puzzleGeometry';
+import { minTouchHitSlop, pieceSize, visualSize } from '../../utils/puzzleGeometry';
 import PieceImage from './PieceImage';
 import styles from '../../screens/PuzzleScreen.styles';
 
@@ -13,6 +13,10 @@ const DraggableGroup = React.memo(function DraggableGroup({
   const pan = useRef(new Animated.ValueXY({ x: group.x, y: group.y })).current;
   const bounds = groupBounds(group);
   const z = group.anchoredToFrame ? 10 : group.pieces.length > 1 ? 20 : 30;
+  const hitSlop = useMemo(
+    () => minTouchHitSlop(bounds.width, bounds.height),
+    [bounds.width, bounds.height]
+  );
 
   useEffect(() => {
     pan.setValue({ x: group.x, y: group.y });
@@ -76,6 +80,7 @@ const DraggableGroup = React.memo(function DraggableGroup({
   return (
     <Animated.View
       {...responder.panHandlers}
+      hitSlop={hitSlop}
       style={[
         styles.boardGroup,
         {
