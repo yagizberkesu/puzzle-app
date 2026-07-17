@@ -15,7 +15,9 @@ export const GROUP_SNAP = 0.22;
 // (yüksek parça sayısı) mantıksal birim cinsinden sabit bir taban kullanmak
 // parçanın kat kat üzerinde bir mesafeden birleşmeye sebep oluyordu.
 export const MIN_SNAP_SCREEN_PX = 10;
-export const DIFFICULTIES = [36, 64, 100, 144, 196, 256];
+// Hepsi tam kare (5²..32²) — createPieces'teki Math.round(Math.sqrt(n))
+// hesabıyla kusursuz NxN grid üretir, yuvarlama hatası olmaz.
+export const DIFFICULTIES = [25, 100, 225, 400, 625, 784, 900, 1024];
 
 // Üst bar yüksekliği (PuzzleScreen.styles.js: gameTopBar.height) — tepsi tam
 // açıldığında bunun hemen altında kalması için sheet yükseklik hesabında da
