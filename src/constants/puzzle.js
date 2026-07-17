@@ -19,6 +19,19 @@ export const MIN_SNAP_SCREEN_PX = 10;
 // hesabıyla kusursuz NxN grid üretir, yuvarlama hatası olmaz.
 export const DIFFICULTIES = [25, 100, 225, 400, 625, 784, 900, 1024];
 
+// Zorluk seçim ekranında her seçeneğin hangi kategoriye/renge ait olduğu.
+// grid, kullanıcıya somut bir fikir vermesi için NxN olarak gösteriliyor.
+export const DIFFICULTY_META = {
+  25: { label: 'Kolay', color: '#4caf7d', grid: 5 },
+  100: { label: 'Kolay', color: '#4caf7d', grid: 10 },
+  225: { label: 'Orta', color: '#4a7fd6', grid: 15 },
+  400: { label: 'Orta', color: '#4a7fd6', grid: 20 },
+  625: { label: 'Zor', color: '#c47b18', grid: 25 },
+  784: { label: 'Zor', color: '#c47b18', grid: 28 },
+  900: { label: 'Uzman', color: '#d1495b', grid: 30 },
+  1024: { label: 'Uzman', color: '#d1495b', grid: 32 },
+};
+
 // Üst bar yüksekliği (PuzzleScreen.styles.js: gameTopBar.height) — tepsi tam
 // açıldığında bunun hemen altında kalması için sheet yükseklik hesabında da
 // kullanılıyor.

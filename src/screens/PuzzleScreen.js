@@ -24,6 +24,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   BOARD_PADDING,
   DIFFICULTIES,
+  DIFFICULTY_META,
   PRESETS,
   SELECT_MODE_INDEX,
   SEND_COUNT,
@@ -35,6 +36,7 @@ import {
   TRAY_ITEM_GAP,
 } from '../constants/puzzle';
 import { height, width } from '../constants/layout';
+import { THEME } from '../constants/theme';
 import {
   center,
   clamp,
@@ -1481,15 +1483,32 @@ const custom = {
             <Text style={styles.modalSubtitle}>{pendingPuzzleTitle}</Text>
 
             <View style={styles.difficultyRow}>
-              {DIFFICULTIES.map((n) => (
-                <TouchableOpacity
-                  key={n}
-                  style={styles.diffBtn}
-                  onPress={() => selectDifficulty(n)}
-                >
-                  <Text style={styles.diffBtnText}>{n}</Text>
-                </TouchableOpacity>
-              ))}
+              {DIFFICULTIES.map((n) => {
+                const meta = DIFFICULTY_META[n] || {
+                  label: '',
+                  color: THEME.purple,
+                  grid: Math.round(Math.sqrt(n)),
+                };
+
+                return (
+                  <TouchableOpacity
+                    key={n}
+                    style={[styles.diffCard, { borderColor: meta.color }]}
+                    onPress={() => selectDifficulty(n)}
+                  >
+                    <View
+                      style={[styles.diffCardAccent, { backgroundColor: meta.color }]}
+                    />
+                    <Text style={[styles.diffCardLabel, { color: meta.color }]}>
+                      {meta.label}
+                    </Text>
+                    <Text style={styles.diffCardNumber}>{n}</Text>
+                    <Text style={styles.diffCardGrid}>
+                      {meta.grid}×{meta.grid}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </Pressable>
         </Pressable>
