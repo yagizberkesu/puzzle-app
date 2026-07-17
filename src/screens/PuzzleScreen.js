@@ -675,7 +675,7 @@ export default function PuzzleScreen() {
 
   const snapToFrame = useCallback(
     (group) => {
-      const target = frameSnapTarget(group, origin);
+      const target = frameSnapTarget(group, origin, boardScaleRef.current);
 
       if (!target) return group;
 
@@ -864,7 +864,7 @@ const custom = {
         };
 
         const others = prev.filter((g) => g.id !== id);
-        const snap = groupSnapTarget(moved, others);
+        const snap = groupSnapTarget(moved, others, boardScaleRef.current);
 
         if (snap) {
           const merged = snapToFrame(

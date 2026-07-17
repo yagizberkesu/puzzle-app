@@ -5,8 +5,16 @@ export const BOARD_PADDING = 16;
 // Draradech jigsaw formülünün (bkz. puzzleGeometry.js TAB_T) varsayılan tab
 // derinliği (3*0.1=%30) tuvalin dışına taşmasın diye 0.2'den büyütüldü.
 export const TAB_RATIO = 0.34;
-export const FRAME_SNAP = 0.85;
-export const GROUP_SNAP = 0.42;
+// Bir Unity yapboz referansına (dist < tile_boyutu*0.2) yakın, parçanın
+// gerçekten yakınında olunca birleşmesi için küçültüldü — eskiden 0.85/0.42
+// idi ve parçalar çok uzaktan bile birleşebiliyordu.
+export const FRAME_SNAP = 0.38;
+export const GROUP_SNAP = 0.22;
+// Board yakınlaştırma seviyesinden bağımsız, ekran pikseli cinsinden sabit
+// bir parmak-hassasiyeti payı (bkz. puzzleGroups.js). Çok küçük parçalarda
+// (yüksek parça sayısı) mantıksal birim cinsinden sabit bir taban kullanmak
+// parçanın kat kat üzerinde bir mesafeden birleşmeye sebep oluyordu.
+export const MIN_SNAP_SCREEN_PX = 10;
 export const DIFFICULTIES = [36, 64, 100, 144, 196, 256];
 
 // Üst bar yüksekliği (PuzzleScreen.styles.js: gameTopBar.height) — tepsi tam

@@ -1,6 +1,6 @@
 import { adjacent, clamp, pieceSize, solvedPosition, visualSize } from './puzzleGeometry';
 import { BREAKPOINT_COMPACT, width } from '../constants/layout';
-import { BOARD_PADDING, FRAME_SNAP, GROUP_SNAP } from '../constants/puzzle';
+import { BOARD_PADDING, FRAME_SNAP, GROUP_SNAP, MIN_SNAP_SCREEN_PX } from '../constants/puzzle';
 
 export function groupPieceCount(groups) {
   return groups.reduce((sum, g) => sum + g.pieces.length, 0);
@@ -56,14 +56,21 @@ export function groupBounds(group) {
   return { width: maxX, height: maxY };
 }
 
-export function groupSnapTarget(dragged, others) {
+export function groupSnapTarget(dragged, others, boardScale = 1) {
   for (const other of others) {
     for (const dp of dragged.pieces) {
       for (const op of other.pieces) {
         if (!adjacent(dp, op)) continue;
 
         const size = pieceSize(dp);
-        const threshold = Math.max(18, size * GROUP_SNAP);
+        // Taban değeri (MIN_SNAP_SCREEN_PX) gerçek ekran pikseli cinsinden
+        // sabit bir parmak-hassasiyeti payı; board yakınlaştırıldığında aynı
+        // ekran-piksel payının mantıksal (board) birimlerinde küçülmesi için
+        // boardScale'e bölünüyor. Aksi halde (sabit bir mantıksal değer
+        // kullanılsaydı) çok küçük parçalarda (örn. 1024 parçalı bir
+        // puzzle'da ~9px parça) bu taban baskın hale gelip parça
+        // boyutunun kat kat üzerinde bir mesafeden birleşmeye sebep olurdu.
+        const threshold = Math.max(MIN_SNAP_SCREEN_PX / boardScale, size * GROUP_SNAP);
 
         const targetX =
           other.x + op.relX + (dp.col - op.col) * size - dp.relX;
@@ -84,13 +91,13 @@ export function groupSnapTarget(dragged, others) {
   return null;
 }
 
-export function frameSnapTarget(group, origin) {
+export function frameSnapTarget(group, origin, boardScale = 1) {
   for (const p of group.pieces) {
     if (!p.isEdge) continue;
 
     const solved = solvedPosition(p, origin);
     const size = pieceSize(p);
-    const threshold = Math.max(18, size * FRAME_SNAP);
+    const threshold = Math.max(MIN_SNAP_SCREEN_PX / boardScale, size * FRAME_SNAP);
 
     const targetX = solved.x - p.relX;
     const targetY = solved.y - p.relY;
