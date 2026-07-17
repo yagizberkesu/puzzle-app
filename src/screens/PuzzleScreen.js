@@ -112,6 +112,9 @@ export default function PuzzleScreen() {
   const [sheetIndex, setSheetIndex] = useState(1);
   const [dragPreview, setDragPreview] = useState(null);
   const [isTrayPieceDragging, setIsTrayPieceDragging] = useState(false);
+  // Board'un en son bıraktığı (2 parmak pinch bitince) zoom oranı — tepsi
+  // parça boyutunu buna göre büyütüp küçültmek için kullanılıyor.
+  const [trayZoomScale, setTrayZoomScale] = useState(1);
 
   const [boardLayout, setBoardLayout] = useState({
     x: 0,
@@ -139,7 +142,13 @@ export default function PuzzleScreen() {
   // gerçek satır/sütun sayısından habersiz) bir boyut hesabı kullanıyordu; bu
   // da örn. 6x6'lık bir puzzle'da board parçaları küçülürken tepsi
   // parçalarının aynı kalıp çok daha büyük görünmesine sebep oluyordu.
-  const trayPieceSize = activePieceSize;
+  //
+  // trayZoomScale, board'da 2 parmakla yakınlaştırma bitince (bkz.
+  // boardPanResponder) board'un o anki zoom oranına eşitleniyor; böylece
+  // tepsideki parça da board'daki parçayla aynı görsel büyüklükte kalıyor
+  // (özellikle yüksek parça sayılarında board zoom yapılmadan parçalar
+  // kullanılamayacak kadar küçük olur).
+  const trayPieceSize = activePieceSize * trayZoomScale;
   const trayVisualSize = visualSize(trayPieceSize);
 
   // Bu boyuttaki parçalardan bir satıra kaç tanesinin sığacağı: grid'in
@@ -366,6 +375,8 @@ export default function PuzzleScreen() {
       x: 0,
       y: 0,
     });
+
+    setTrayZoomScale(1);
   }, [boardPan, boardScale]);
 
   // selectDifficulty ve openSavedPuzzle'ın ortak "puzzle ekranına gir + oyun
@@ -444,6 +455,19 @@ export default function PuzzleScreen() {
 
           boardScale.setValue(nextScale);
           boardPan.setValue(nextPan);
+        },
+
+        // Pinch bitince (parmaklar kalkınca) tepsideki parça boyutunu
+        // board'un son zoom oranına eşitle. Her hareket karesinde değil,
+        // sadece jest bitince güncelliyoruz — aksi halde tepsi grid'i
+        // (sütun sayısı yeniden hesaplanıp remount olduğu için) pinch
+        // sırasında sürekli titreyip performansı bozar.
+        onPanResponderRelease: () => {
+          setTrayZoomScale(boardScaleRef.current);
+        },
+
+        onPanResponderTerminate: () => {
+          setTrayZoomScale(boardScaleRef.current);
         },
       }),
     [boardPan, boardScale]
