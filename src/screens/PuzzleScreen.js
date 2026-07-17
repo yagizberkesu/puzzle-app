@@ -30,6 +30,7 @@ import {
   SEND_COUNT,
   SHEET_MIN_HEIGHT,
   SHEET_TOP_GAP,
+  SOUND_SETTING_KEY,
   STORAGE_KEY,
   TOP_BAR_HEIGHT,
   TRAY_GRID_H_PADDING,
@@ -103,6 +104,10 @@ export default function PuzzleScreen() {
   const [screenMode, setScreenMode] = useState('home');
   const [savedPuzzles, setSavedPuzzles] = useState([]);
   const [homeLoading, setHomeLoading] = useState(true);
+  // Parça birleşme/kilometre taşı sesi ve titreşimi aç-kapa — tercih
+  // AsyncStorage'da saklanıyor (bkz. aşağıdaki yükleme effect'i).
+  // Görsel pırıltı efekti bu ayardan bağımsız, her zaman gösteriliyor.
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [activePuzzleId, setActivePuzzleId] = useState(null);
   const [pendingPuzzleId, setPendingPuzzleId] = useState(null);
   const [pendingPuzzleTitle, setPendingPuzzleTitle] = useState('Yeni Puzzle');
@@ -268,6 +273,34 @@ export default function PuzzleScreen() {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    AsyncStorage.getItem(SOUND_SETTING_KEY)
+      .then((raw) => {
+        if (mounted && raw !== null) {
+          setSoundEnabled(raw === '1');
+        }
+      })
+      .catch((e) => {
+        if (__DEV__) console.log('Ses ayarı yükleme hatası:', e);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(SOUND_SETTING_KEY, next ? '1' : '0').catch((e) => {
+        if (__DEV__) console.log('Ses ayarı kaydetme hatası:', e);
+      });
+      return next;
+    });
   }, []);
 
   const persistPuzzles = useCallback((next) => {
@@ -754,10 +787,12 @@ export default function PuzzleScreen() {
         setSparkles((prev) => prev.filter((s) => !ids.has(s.id)));
       }, 600);
 
-      mergeSoundPlayer.seekTo(0);
-      mergeSoundPlayer.play();
+      if (soundEnabled) {
+        mergeSoundPlayer.seekTo(0);
+        mergeSoundPlayer.play();
+      }
     },
-    [mergeSoundPlayer]
+    [mergeSoundPlayer, soundEnabled]
   );
 
   // Çözülen parça sayısı eşikleri: her 10 parçada büyük bir pırıltı
@@ -773,9 +808,11 @@ export default function PuzzleScreen() {
     const centerY = (boardLayout?.height || 600) / 2;
 
     if (Math.floor(next / 50) > Math.floor(prev / 50)) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      milestoneSoundPlayer.seekTo(0);
-      milestoneSoundPlayer.play();
+      if (soundEnabled) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+        milestoneSoundPlayer.seekTo(0);
+        milestoneSoundPlayer.play();
+      }
       triggerPieceMergeFeedback(centerX, centerY, 6);
     } else if (Math.floor(next / 10) > Math.floor(prev / 10)) {
       triggerPieceMergeFeedback(centerX, centerY, 3);
@@ -784,6 +821,7 @@ export default function PuzzleScreen() {
     boardLayout,
     currentSolvedCount,
     milestoneSoundPlayer,
+    soundEnabled,
     totalPieces,
     triggerPieceMergeFeedback,
   ]);
@@ -1057,6 +1095,17 @@ const custom = {
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.homeHero}>
+            <TouchableOpacity
+              style={styles.homeSoundToggle}
+              activeOpacity={0.7}
+              onPress={toggleSound}
+              hitSlop={10}
+            >
+              <Text style={styles.homeSoundToggleText}>
+                {soundEnabled ? '🔊' : '🔇'}
+              </Text>
+            </TouchableOpacity>
+
             <Text style={styles.homeEyebrow}>PUZZLE STUDIO</Text>
             <Text style={styles.homeTitle}>Puzzle'larım</Text>
 

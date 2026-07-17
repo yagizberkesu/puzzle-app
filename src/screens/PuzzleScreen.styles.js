@@ -42,6 +42,18 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
 
+  homeSoundToggle: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    zIndex: 1,
+    padding: 4,
+  },
+
+  homeSoundToggleText: {
+    fontSize: 20,
+  },
+
   homeEyebrow: {
     color: THEME.purple,
     fontSize: 12,

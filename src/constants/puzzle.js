@@ -1,4 +1,5 @@
 export const STORAGE_KEY = 'PUZZLE_APP_SAVED_PUZZLES_V2';
+export const SOUND_SETTING_KEY = 'PUZZLE_APP_SOUND_ENABLED_V1';
 export const SELECT_MODE_INDEX = 3;
 export const SEND_COUNT = 20;
 export const BOARD_PADDING = 16;
